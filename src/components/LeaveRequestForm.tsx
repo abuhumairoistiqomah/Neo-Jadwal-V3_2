@@ -27,8 +27,9 @@ import {
 import { syncTaskResourcesWithText } from "../domain/taskResources";
 import { saveStoredTaskAccess } from "../domain/taskRecovery";
 import { uploadPublicLeaveTaskFile, type PublicLeaveTaskUploadResult } from "../infrastructure/drive/publicLeaveTaskDriveBridge";
-import { SupabasePublicLeaveRepository } from "../infrastructure/repositories/supabasePublicLeaveRepository";
+import { SupabasePublicLeaveRepository, type ExistingLeaveFreeCorrection } from "../infrastructure/repositories/supabasePublicLeaveRepository";
 import { isSupabaseConfigured } from "../infrastructure/supabase/client";
+import { getCurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
 
 interface LeaveRequestFormProps {
   teachers: Teacher[];
@@ -104,6 +105,11 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
   const [uploadError, setUploadError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [freeCorrection, setFreeCorrection] = useState<ExistingLeaveFreeCorrection | null>(null);
+  const [correctionSelected, setCorrectionSelected] = useState<number[]>([]);
+  const [correctionBusy, setCorrectionBusy] = useState(false);
+  const [isStaffForCorrection, setIsStaffForCorrection] = useState(false);
+  const [correctionSuccess, setCorrectionSuccess] = useState("");
   const [success, setSuccess] = useState<{
     requestId: string;
     requestCode: string;
@@ -117,6 +123,13 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
   } | null>(null);
 
   const repository = useMemo(() => new SupabasePublicLeaveRepository(), []);
+
+  useEffect(() => {
+    void getCurrentUserContext().then((auth) => {
+      setIsStaffForCorrection(Boolean(auth?.roles.some((role) => role === "ADMIN" || role === "WAKASEK")));
+    }).catch(() => setIsStaffForCorrection(false));
+  }, []);
+
 
   useEffect(() => {
     if (teacherTouched) return;
@@ -167,6 +180,46 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
     setRequestType(type);
     if (type === "FULL_DAY") {
       setSelectedSlotKeys(new Set(availableSlots.map((slot) => slot.key)));
+    }
+  };
+
+  useEffect(() => {
+    setFreeCorrection(null);
+    setCorrectionSelected([]);
+    setCorrectionSuccess("");
+  }, [teacherName, scheduleDate]);
+
+  const handleFindExistingFreePeriods = async () => {
+    if (!teacherName || !scheduleDate) return;
+    setCorrectionBusy(true);
+    setError("");
+    setCorrectionSuccess("");
+    try {
+      const existing = await repository.findExistingFreeCorrection(teacherName, scheduleDate);
+      setFreeCorrection(existing);
+      setCorrectionSelected([]);
+      if (!existing) setError("Tidak ditemukan izin SUBMITTED/APPROVED untuk guru dan tanggal ini.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCorrectionBusy(false);
+    }
+  };
+
+  const handleAppendFreePeriods = async () => {
+    if (!freeCorrection || correctionSelected.length === 0) return;
+    setCorrectionBusy(true);
+    setError("");
+    try {
+      const added = await repository.appendExistingFreePeriods(freeCorrection.requestId, correctionSelected);
+      setCorrectionSuccess(`JP ${added.join(", ")} ditambahkan pada izin ${freeCorrection.requestCode || "sebelumnya"} sebagai JP FREE. Tidak ada badal baru.`);
+      const fresh = await repository.findExistingFreeCorrection(teacherName, scheduleDate);
+      setFreeCorrection(fresh);
+      setCorrectionSelected([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCorrectionBusy(false);
     }
   };
 
@@ -254,7 +307,20 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
       setReason("");
       setDetail("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      if (message.includes("sudah memiliki pengajuan izin aktif")) {
+        // Corrections to existing leave are staff-only, not public resubmissions.
+        try {
+          const auth = await getCurrentUserContext();
+          if (auth?.roles.some((role) => role === "ADMIN" || role === "WAKASEK")) {
+            const existing = await repository.findExistingFreeCorrection(teacherName, scheduleDate);
+            setFreeCorrection(existing);
+          }
+        } catch (correctionError) {
+          setError(`${message} Koreksi JP Free membutuhkan login ADMIN/WAKASEK dan migration RC3.4.6. ${correctionError instanceof Error ? correctionError.message : ""}`);
+        }
+      }
     } finally {
       setSubmitting(false);
     }
@@ -583,6 +649,35 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
                 <span className="text-slate-900 font-black">{selectedSlots.length} / {availableSlots.length}</span>
               </div>
               {error && <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{error}</div>}
+              {correctionSuccess && <div className="mb-3 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">{correctionSuccess}</div>}
+              {isStaffForCorrection && !freeCorrection && (
+                <button type="button" onClick={() => void handleFindExistingFreePeriods()} disabled={correctionBusy || !teacherName || !scheduleDate}
+                  className="mb-3 w-full px-3 py-2 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-800 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50">
+                  {correctionBusy ? "Mencari Pengajuan Lama..." : "Admin: Tambahkan JP Free ke Pengajuan Lama"}
+                </button>
+              )}
+              {freeCorrection && (
+                <div className="mb-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 space-y-2 text-sm">
+                  <div className="font-bold text-indigo-900">Perbaiki izin yang sudah ada — {freeCorrection.requestCode || "Pengajuan aktif"}</div>
+                  <div className="text-xs text-indigo-800">Status: {freeCorrection.status}. JP tercatat: {freeCorrection.recordedPeriods.map((p) => `JP${p}`).join(", ") || "–"}. Perubahan hanya untuk JP kosong; pengajuan lama, persetujuan, dan badal tetap utuh.</div>
+                  {freeCorrection.missingFreePeriods.length === 0 ? (
+                    <div className="text-xs font-semibold text-indigo-700">Tidak ada JP FREE yang masih bisa ditambahkan. Jika jam tersebut sebenarnya mengajar, gunakan koreksi admin tersendiri.</div>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap gap-3">
+                        {freeCorrection.missingFreePeriods.map((period) => (
+                          <label key={period} className="flex items-center gap-1.5 text-xs font-semibold text-indigo-900 cursor-pointer">
+                            <input type="checkbox" checked={correctionSelected.includes(period)} onChange={(event) => setCorrectionSelected((current) => event.target.checked ? [...current, period].sort((a, b) => a - b) : current.filter((jp) => jp !== period))} /> JP{period} Free
+                          </label>
+                        ))}
+                      </div>
+                      <button type="button" onClick={() => void handleAppendFreePeriods()} disabled={correctionBusy || correctionSelected.length === 0} className="px-3 py-2 text-xs font-black rounded-lg bg-indigo-600 disabled:opacity-40 text-white hover:bg-indigo-500">
+                        {correctionBusy ? "Menyimpan Koreksi..." : "Tambahkan JP Free ke Izin Lama"}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
               <button
                 type="submit"
                 disabled={submitting || !teacherName || !reason.trim() || selectedSlots.length === 0 || !isSupabaseConfigured}

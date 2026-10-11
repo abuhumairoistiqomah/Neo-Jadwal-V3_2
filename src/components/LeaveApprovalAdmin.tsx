@@ -463,12 +463,15 @@ export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({ teachers
                     )}
                     <div className="text-[10px] text-slate-400 mt-1">Database: {session.coverageSlotIds.length} coverage row{session.coverageSlotIds.length > 1 ? "s" : ""}</div>
                   </div>
-                  <button
-                    onClick={() => { window.location.href = buildBadalProcessingUrl(session); }}
+                  <a
+                    href={buildBadalProcessingUrl(session)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Buka pengisian guru pengganti di tab baru; halaman persetujuan tetap terbuka"
                     className="shrink-0 px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm flex items-center justify-center gap-2"
                   >
-                    <Clock3 className="w-4 h-4" /> Proses Badal
-                  </button>
+                    <Clock3 className="w-4 h-4" /> Proses Badal ↗
+                  </a>
                 </div>
               ))}
             </div>

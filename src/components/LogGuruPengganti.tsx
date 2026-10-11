@@ -2,16 +2,19 @@ import React, { useState, useMemo } from "react";
 import { LogIzinItem, Teacher, renderTaskWithLinks } from "../types";
 import { 
   ArrowLeft, ClipboardList, Copy, Check, Search, Calendar, 
-  Trash2, ShieldAlert, CheckCircle, HelpCircle, Bell, MessageCircle 
+  Trash2, ShieldAlert, CheckCircle, HelpCircle, Bell, MessageCircle, Pencil, X, Loader2 
 } from "lucide-react";
 import { JAM_TIME_MAP } from "../constants/schedule";
 import { buildSubstituteReminderWhatsappMessage, findTeacherByName } from "../domain/whatsappTemplates";
 import { groupSubstituteLogsForBroadcast } from "../domain/inval/broadcastGrouping";
+import { getPublicScheduleUrl } from "../domain/whatsappPublicUrl";
+import { SearchableSelect } from "./ui/SearchableSelect";
 
 interface LogGuruPenggantiProps {
   logs: LogIzinItem[];
   teachers?: Teacher[];
   onDeleteLog?: (id: string) => void;
+  onReplaceSubstitute?: (log: LogIzinItem, substituteTeacherId: string, constraintIds?: string[], overrideNote?: string) => Promise<void>;
   onBack: () => void;
 }
 
@@ -35,11 +38,77 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
   logs,
   teachers = [],
   onDeleteLog,
+  onReplaceSubstitute,
   onBack,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [copiedDate, setCopiedDate] = useState<string | null>(null);
   const [copiedIndividualId, setCopiedIndividualId] = useState<string | null>(null);
+  const [editingLog, setEditingLog] = useState<LogIzinItem | null>(null);
+  const [newTeacherId, setNewTeacherId] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [softConstraintIds, setSoftConstraintIds] = useState<string[]>([]);
+  const [confirmSoftOverride, setConfirmSoftOverride] = useState(false);
+  const [overrideNote, setOverrideNote] = useState("");
+  const teacherOptions = useMemo(() => teachers.filter((teacher) => teacher.id).map((teacher) => ({
+    value: String(teacher.id), label: teacher.nama,
+  })).sort((a, b) => a.label.localeCompare(b.label, "id")), [teachers]);
+
+  const openEditor = (log: LogIzinItem) => {
+    const chosen = teachers.find((t) => t.id && (
+      t.id === log.substitute_teacher_id || t.nama.trim().toLocaleLowerCase("id-ID") === log.guru_pengganti.trim().toLocaleLowerCase("id-ID")
+    ));
+    setEditingLog(log);
+    setNewTeacherId(String(chosen?.id || ""));
+    setEditError("");
+    setSoftConstraintIds([]);
+    setConfirmSoftOverride(false);
+    setOverrideNote("");
+  };
+
+  const closeEditor = () => {
+    if (savingEdit) return;
+    setEditingLog(null);
+    setEditError("");
+  };
+
+  const saveEditedSubstitute = async () => {
+    if (!editingLog || !onReplaceSubstitute || savingEdit) return;
+    if (!newTeacherId) { setEditError("Pilih guru pengganti dari daftar."); return; }
+    if (newTeacherId === editingLog.substitute_teacher_id ||
+      teachers.find((teacher) => teacher.id === newTeacherId)?.nama.trim().toLocaleLowerCase("id-ID") === editingLog.guru_pengganti.trim().toLocaleLowerCase("id-ID")) {
+      setEditError("Pilih guru yang berbeda dari pengganti saat ini."); return;
+    }
+    if (softConstraintIds.length && (!confirmSoftOverride || !overrideNote.trim())) {
+      setEditError("Konfirmasi dan tulis alasan override sebelum melanjutkan."); return;
+    }
+    setSavingEdit(true);
+    setEditError("");
+    try {
+      await onReplaceSubstitute(editingLog, newTeacherId, softConstraintIds,
+        softConstraintIds.length ? overrideNote.trim() : undefined);
+      setEditingLog(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const match = message.match(/SOFT_SUBSTITUTE_CONSTRAINT_ACK_REQUIRED:\s*([0-9a-f,\s-]+)/i);
+      if (match) {
+        const ids = match[1].split(",").map((id) => id.trim()).filter(Boolean);
+        setSoftConstraintIds(ids);
+        setEditError("Guru mempunyai aturan badal yang perlu konfirmasi. Tinjau alasannya sebelum menyimpan ulang.");
+      } else {
+        setEditError(message);
+      }
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const teacherAlreadyAssigned = editingLog ? logs.filter((other) =>
+    other.id !== editingLog.id && other.tanggal === editingLog.tanggal &&
+    other.jam_ke === editingLog.jam_ke && other.substitute_teacher_id === newTeacherId
+  ) : [];
+
 
   // Group logs by Date
   const groupedLogs = useMemo(() => {
@@ -79,7 +148,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
     // Format date beautifully Indonesian style
     const dateFormatted = formatIndoDate(tanggal);
 
-    let waText = `*Hal: Guru Pengganti*\n\nBismillah. Berikut nama - nama guru pengganti hari *${dateFormatted}*.\nInfo lebih lanjut, buka di situs jadwal digital: https://neojadwalv3.vercel.app/\n\n`;
+    let waText = `*Hal: Guru Pengganti*\n\nBismillah. Berikut nama - nama guru pengganti hari *${dateFormatted}*.\nInfo lebih lanjut, buka di situs jadwal digital: ${getPublicScheduleUrl()}\n\n`;
     
     // Group items by Teacher Izin first so they appear neatly
     const teacherMap: Record<string, LogIzinItem[]> = {};
@@ -143,6 +212,47 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
 
   return (
     <div className="space-y-6">
+      {editingLog && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/60 p-3"
+          role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditor(); }}>
+          <div role="dialog" aria-modal="true" aria-label="Edit guru badal"
+            className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-3">
+              <div><h3 className="font-black text-lg text-slate-900">Ganti Guru Badal</h3>
+                <p className="text-xs text-slate-500 mt-1">{formatIndoDate(editingLog.tanggal)} • JP {editingLog.jam_ke} • {editingLog.kelas}</p></div>
+              <button type="button" aria-label="Tutup edit badal" onClick={closeEditor} disabled={savingEdit}
+                className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-sm space-y-1">
+              <p><span className="text-slate-500">Guru izin:</span> <strong>{editingLog.guru_izin}</strong></p>
+              <p><span className="text-slate-500">Pengganti sekarang:</span> <strong>{editingLog.guru_pengganti || "Belum ditentukan"}</strong></p>
+              <p className="text-xs text-slate-500">Materi tugas, link, tanggal, dan kelas tidak diubah.</p>
+            </div>
+            <div><label className="block text-sm font-bold mb-1.5">Guru pengganti baru</label>
+              <SearchableSelect value={newTeacherId} onChange={(id) => {
+                setNewTeacherId(id); setSoftConstraintIds([]); setConfirmSoftOverride(false); setEditError("");
+              }} options={teacherOptions} placeholder="Pilih atau ketik nama guru" />
+            </div>
+            {teacherAlreadyAssigned.length > 0 && <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+              Perhatian: guru ini sudah ditunjuk sebagai badal pada tanggal/JP sama di {teacherAlreadyAssigned.map((item) => item.kelas).join(", ")}. Periksa apakah satu sesi gabungan atau bentrok nyata.
+            </div>}
+            {softConstraintIds.length > 0 && <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2 text-xs">
+              <p className="font-bold text-amber-900">Aturan ketersediaan guru membutuhkan override admin.</p>
+              <label className="flex gap-2 items-start text-amber-900"><input type="checkbox" checked={confirmSoftOverride} onChange={(e) => setConfirmSoftOverride(e.target.checked)} /> Saya sudah memeriksa dan menyetujui override.</label>
+              <textarea value={overrideNote} onChange={(e) => setOverrideNote(e.target.value)}
+                placeholder="Alasan override wajib diisi" className="w-full border rounded-lg p-2" rows={2} />
+            </div>}
+            {editError && <p role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3 break-words">{editError}</p>}
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={closeEditor} disabled={savingEdit} className="px-4 py-2 border rounded-xl font-semibold">Batal</button>
+              <button type="button" onClick={() => void saveEditedSubstitute()} disabled={savingEdit || !newTeacherId}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold disabled:opacity-50 flex gap-2 items-center">
+                {savingEdit && <Loader2 className="w-4 h-4 animate-spin" />} Simpan Perubahan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Back Button */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <button
@@ -322,12 +432,20 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                                 </button>
                               )}
 
+                              {onReplaceSubstitute && (
+                                <button
+                                  id={`edit-badal-${log.id}`}
+                                  onClick={() => openEditor(log)}
+                                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
+                                  title="Ganti guru badal tanpa menghapus catatan atau tugas"
+                                ><Pencil className="w-3.5 h-3.5" /> Edit Badal</button>
+                              )}
                               {onDeleteLog && (
                                 <button
                                   id={`delete-log-${log.id}`}
                                   onClick={() => onDeleteLog(log.id)}
                                   className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                  title="Hapus log"
+                                  title="Batalkan log (soft-delete; audit tetap tersimpan)"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
@@ -353,6 +471,12 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                           <span className="text-[10px] text-gray-400 italic">Alasan: {log.alasan}</span>
                         </div>
 
+                        {onReplaceSubstitute && (
+                          <button id={`edit-badal-mob-${log.id}`} onClick={() => openEditor(log)}
+                            className="flex items-center gap-1 px-2 py-1 text-xs font-bold text-indigo-700 bg-indigo-50 rounded-lg">
+                            <Pencil className="w-3.5 h-3.5" /> Edit Badal
+                          </button>
+                        )}
                         {onDeleteLog && (
                           <button
                             id={`delete-log-mob-${log.id}`}

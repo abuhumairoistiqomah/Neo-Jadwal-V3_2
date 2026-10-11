@@ -43,6 +43,8 @@ function actionLabel(action: string): string {
     case "OPERATIONAL_RULE_INSERT": return "Tambah Kalender Akademik";
     case "OPERATIONAL_RULE_UPDATE": return "Update Kalender Akademik";
     case "OPERATIONAL_RULE_DELETE": return "Hapus Kalender Akademik";
+    case "ACADEMIC_EVENT_GROUP_PUBLISH": return "Publish Kalender Akademik (Batch)";
+    case "ACADEMIC_EVENT_GROUP_STATUS": return "Aktif/Nonaktif Kalender Akademik";
     default: return action.replaceAll("_", " ");
   }
 }

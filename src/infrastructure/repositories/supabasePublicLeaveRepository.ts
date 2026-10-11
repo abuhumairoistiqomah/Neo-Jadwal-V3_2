@@ -18,7 +18,43 @@ interface PublicLeaveRpcRow {
   task_count?: number;
 }
 
+export interface ExistingLeaveFreeCorrection {
+  requestId: string;
+  requestCode: string;
+  status: "SUBMITTED" | "APPROVED";
+  recordedPeriods: number[];
+  missingFreePeriods: number[];
+}
+
 export class SupabasePublicLeaveRepository implements PublicLeaveRepository {
+  /** Admin/Wakasek only. The DB lists only genuinely FREE unrecorded periods. */
+  async findExistingFreeCorrection(teacherName: string, date: string): Promise<ExistingLeaveFreeCorrection | null> {
+    const client = requireSupabaseClient();
+    const { data, error } = await client.rpc("ejadwal_find_leave_free_amendment_v1", {
+      p_teacher_name: teacherName, p_schedule_date: date,
+    });
+    if (error) throw new Error(`Gagal mencari izin lama: ${error.message}`);
+    if (!data) return null;
+    const row = data as Record<string, unknown>;
+    return {
+      requestId: String(row.request_id || ""),
+      requestCode: String(row.request_code || ""),
+      status: row.status === "APPROVED" ? "APPROVED" : "SUBMITTED",
+      recordedPeriods: Array.isArray(row.recorded_periods) ? row.recorded_periods.map(Number) : [],
+      missingFreePeriods: Array.isArray(row.missing_free_periods) ? row.missing_free_periods.map(Number) : [],
+    };
+  }
+
+  async appendExistingFreePeriods(requestId: string, periods: number[]): Promise<number[]> {
+    const client = requireSupabaseClient();
+    const { data, error } = await client.rpc("ejadwal_append_leave_free_periods_v1", {
+      p_leave_request_id: requestId, p_periods: periods,
+    });
+    if (error) throw new Error(`Gagal mengoreksi JP izin: ${error.message}`);
+    const result = (data || {}) as Record<string, unknown>;
+    return Array.isArray(result.added_periods) ? result.added_periods.map(Number) : [];
+  }
+
   async submit(payload: PublicLeaveSubmissionPayload): Promise<PublicLeaveSubmitResult> {
     const client = requireSupabaseClient();
     const { data, error } = await client.rpc("ejadwal_submit_public_leave_request_v3", payload);

@@ -76,6 +76,13 @@ export interface LogIzinItem {
   kelas: string;
   mapel: string;
   guru_pengganti: string; // Name of replacement
+  /** Persistence source; required to distinguish audited legacy amendments. */
+  source?: string;
+  /** Selected substitute UUID when loaded from Supabase. */
+  substitute_teacher_id?: string | null;
+  /** Dated public contact: populated only for active current/future coverage. */
+  whatsapp_guru_izin?: string | null;
+  whatsapp_guru_pengganti?: string | null;
   tugas?: string;
   created_at?: string;
 }

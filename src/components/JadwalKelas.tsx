@@ -507,8 +507,9 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
 
     const cell = classWeekMap[hari]?.[jam];
     if (!cell || cell.items.length === 0) return null;
+    const activeItems = cell.items.filter((item) => item.isActive);
     const eventItem = cell.items.find((item) => item.isSuppressedByAcademicCalendar && item.academicEvent);
-    if (eventItem?.academicEvent) {
+    if (activeItems.length === 0 && eventItem?.academicEvent) {
       return {
         items: cell.baseItems,
         editItems: [],
@@ -521,7 +522,6 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
       };
     }
 
-    const activeItems = cell.items.filter((item) => item.isActive);
     if (activeItems.length === 0) return null;
     const displayItems = activeItems.map((item) => {
       const teachers = item.effectiveTeachers || item.scheduledTeachers || [];

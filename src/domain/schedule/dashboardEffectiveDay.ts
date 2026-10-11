@@ -43,3 +43,19 @@ export function getDashboardClassSlotItems(
   const incidentals = candidates.filter((item) => item.source !== "MASTER");
   return incidentals.length > 0 ? incidentals : candidates;
 }
+
+/**
+ * A canceled master assignment is context, not another lesson. When a teacher
+ * receives a dated active replacement in the same JP, suppress the old
+ * cancelled class from the teacher-facing grouping only. Preserve the
+ * cancelled card when no alternate teaching assignment exists.
+ */
+export function selectOperationalTeacherSchedules<
+  T extends Pick<EffectiveScheduleItem, "jam_ke" | "isActive" | "isSuppressedByAcademicCalendar">
+>(items: T[]): T[] {
+  const activePeriods = new Set(items
+    .filter((item) => item.isActive && !item.isSuppressedByAcademicCalendar)
+    .map((item) => Number(item.jam_ke)));
+  return items.filter((item) =>
+    !item.isSuppressedByAcademicCalendar || !activePeriods.has(Number(item.jam_ke)));
+}

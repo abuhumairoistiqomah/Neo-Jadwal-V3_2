@@ -375,6 +375,24 @@ async function importCoverage(
   const client = requireSupabaseClient();
   await deleteStaleLegacyRows("coverage_slots", "legacy_log_id", plan.coverage.map((row) => row.legacyLogId));
   const coverageIdByLegacy = new Map<string, string>();
+  // A previously cancelled legacy row is a deliberate administrative decision.
+  // A later migration/reimport must not resurrect that soft-deleted coverage.
+  const cancelledLegacy = new Map<string, { deleted_at: string; deleted_by: string | null }>();
+  for (const batch of chunks(plan.coverage.map((row) => row.legacyLogId))) {
+    const { data, error } = await client.from("coverage_slots")
+      .select("legacy_log_id,deleted_at,deleted_by,status")
+      .in("legacy_log_id", batch)
+      .not("deleted_at", "is", null);
+    if (error) throw new Error(`legacy soft-delete lookup: ${error.message}`);
+    for (const row of data || []) {
+      if (row.legacy_log_id && row.deleted_at && row.status === "CANCELLED") {
+        cancelledLegacy.set(String(row.legacy_log_id), {
+          deleted_at: String(row.deleted_at),
+          deleted_by: row.deleted_by ? String(row.deleted_by) : null,
+        });
+      }
+    }
+  }
 
   for (const batch of chunks(plan.coverage)) {
     const payload = batch.map((row) => ({
@@ -389,7 +407,7 @@ async function importCoverage(
       substitute_teacher_id: row.substituteTeacherName ? teacherIds.get(normalizedName(row.substituteTeacherName)) || null : null,
       substitute_teacher_name_snapshot: row.substituteTeacherName,
       reason_snapshot: row.reasonSnapshot,
-      status: row.status,
+      status: cancelledLegacy.has(row.legacyLogId) ? "CANCELLED" : row.status,
       source: "LEGACY_IMPORT",
       schedule_master_id: null,
       schedule_incidental_id: null,
@@ -397,8 +415,8 @@ async function importCoverage(
       // Legacy sheet does not preserve assignment timestamp; do not invent one.
       assigned_at: null,
       legacy_log_id: row.legacyLogId,
-      deleted_at: null,
-      deleted_by: null,
+      deleted_at: cancelledLegacy.get(row.legacyLogId)?.deleted_at ?? null,
+      deleted_by: cancelledLegacy.get(row.legacyLogId)?.deleted_by ?? null,
     }));
     const { data, error } = await client
       .from("coverage_slots")

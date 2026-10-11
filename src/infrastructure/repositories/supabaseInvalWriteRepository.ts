@@ -59,6 +59,28 @@ export class SupabaseInvalWriteRepository implements InvalWriteRepository {
     };
   }
 
+  /** Change only the substitute; tasks, resources and absence remain untouched. */
+  async replaceSubstitute(input: {
+    coverageSlotId: string;
+    substituteTeacherId: string;
+    constraintIds?: string[];
+    overrideNote?: string;
+  }): Promise<{ coverageSlotId: string; requestId: string }> {
+    const client = requireSupabaseClient();
+    const { data, error } = await client.rpc("ejadwal_replace_inval_substitute_v1", {
+      p_coverage_slot_id: input.coverageSlotId,
+      p_substitute_teacher_id: input.substituteTeacherId,
+      p_constraint_ids: input.constraintIds ?? [],
+      p_override_note: input.overrideNote ?? null,
+    });
+    if (error) throw new Error(`Gagal mengganti guru badal: ${error.message}`);
+    const row = asObject(data);
+    return {
+      coverageSlotId: String(row.coverage_slot_id || input.coverageSlotId),
+      requestId: String(row.request_id || ""),
+    };
+  }
+
   async deleteAssignment(input: {
     coverageSlotId: string;
     deleteNote?: string;

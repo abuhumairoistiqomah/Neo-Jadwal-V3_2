@@ -110,6 +110,12 @@ function timeForPeriod(period: number, items: EffectiveScheduleItem[]): [string,
 }
 
 
+/** Wali/pendamping assignments may list several canonical classes in one field. */
+export function splitHomeroomClasses(value: string): string[] {
+  const names = value.split(/[+,;&|/\n]+|\band\b|\bdan\b/gi).map((part) => part.trim()).filter(Boolean);
+  return [...new Map(names.map((name) => [name.toLocaleLowerCase("id-ID"), name])).values()];
+}
+
 function teacherHomeroomDuty(teacher?: Teacher): { classCode: string; subject: string } | null {
   if (!teacher) return null;
   const wali = String(teacher.wali_kelas || "").trim();
@@ -192,22 +198,23 @@ export function buildTeacherLeaveSlots(args: {
     const [startTime, endTime] = timeForPeriod(period, periodItems);
 
     if (period === 0 && teacherItems.length === 0 && homeroomDuty) {
+      const homeroomClasses = splitHomeroomClasses(homeroomDuty.classCode);
       result.push({
         key: `${scheduleDate}|JP0`,
         scheduleDate,
         period: 0,
         periodType: "TEACHING",
-        classCode: homeroomDuty.classCode,
+        classCode: homeroomClasses.join(" + "),
         subject: homeroomDuty.subject,
         startTime,
         endTime,
         source: "MASTER",
-        assignments: [{
-          classCode: homeroomDuty.classCode,
+        assignments: homeroomClasses.map((classCode) => ({
+          classCode,
           subject: homeroomDuty.subject,
-          source: "MASTER",
-        }],
-        isCombinedSession: false,
+          source: "MASTER" as const,
+        })),
+        isCombinedSession: homeroomClasses.length > 1,
       });
       continue;
     }

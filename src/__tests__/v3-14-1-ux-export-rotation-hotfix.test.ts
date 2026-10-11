@@ -34,9 +34,11 @@ test("V3.14.1+ image export uses isolated safe clone pipeline", () => {
 
 test("V3.14.1 Quick Edit supports ALTERNATING class mode", () => {
   assert.match(quickEdit, /Pelajaran Bergantian \/ Rotasi/);
-  assert.match(quickEdit, /1 kali \/ 2 minggu/);
-  assert.match(quickEdit, /1 kali \/ 3 minggu/);
-  assert.match(quickEdit, /1 kali \/ 4 minggu/);
+  // RC3.4.3 replaced hardcoded dropdown options with searchable generated options.
+  // Assert supported frequencies and the displayed label template, not 3 literal copies.
+  assert.match(quickEdit, /\[2,\s*3,\s*4\]\.map/);
+  assert.match(quickEdit, /label:\s*`1 kali \/ \$\{weeks\} minggu`/);
+  assert.match(quickEdit, /rotationEveryWeeks/);
   assert.match(quickEdit, /ALTERNATING/);
   assert.match(repo, /ejadwal_update_schedule_master_v4/);
   assert.match(repo, /ejadwal_upsert_schedule_incidental_session_v[23]/);

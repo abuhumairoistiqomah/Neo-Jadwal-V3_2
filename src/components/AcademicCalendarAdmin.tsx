@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, CalendarDays, Check, Edit3, Loader2, RefreshCw, RotateCcw, Save, Search, ShieldAlert, ToggleLeft, ToggleRight } from "lucide-react";
 import { atomicClassChoices, expandCalendarClassIds } from "../domain/academicCalendarClasses";
 import { getErrorMessage } from "../domain/errorMessage";
+import { getSchoolTodayISO } from "../domain/date";
+import { filterOperationalHistory, isPastAcademicEvent } from "../domain/operationalHistoryVisibility";
 import { getCurrentUserContext, type CurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
 import {
   OperationalRulesRepository,
@@ -25,6 +27,8 @@ export const AcademicCalendarAdmin: React.FC<Props> = ({ onBack, onChanged }) =>
   const [context, setContext] = useState<CurrentUserContext | null>(null);
   const [classes, setClasses] = useState<OperationalClassRow[]>([]);
   const [groups, setGroups] = useState<AcademicEventGroup[]>([]);
+  const [showPastGroups, setShowPastGroups] = useState(false);
+  const [schoolToday, setSchoolToday] = useState(getSchoolTodayISO);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -44,6 +48,12 @@ export const AcademicCalendarAdmin: React.FC<Props> = ({ onBack, onChanged }) =>
   const [classSearch, setClassSearch] = useState("");
 
   const canManage = Boolean(context?.roles.some((role) => role === "ADMIN" || role === "WAKASEK"));
+  const pastGroupsCount = groups.filter((group) => isPastAcademicEvent(group, schoolToday)).length;
+  const displayedGroups = filterOperationalHistory<AcademicEventGroup>(groups, (group) => isPastAcademicEvent(group, schoolToday), showPastGroups);
+  useEffect(() => {
+    const timer = window.setInterval(() => setSchoolToday(getSchoolTodayISO()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const atomicClasses = useMemo(() => atomicClassChoices(classes), [classes]);
   const combinedCount = classes.length - atomicClasses.length;
   const filteredClasses = useMemo(() => {
@@ -189,9 +199,9 @@ export const AcademicCalendarAdmin: React.FC<Props> = ({ onBack, onChanged }) =>
       </section>
 
       <section className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100"><h2 className="font-black text-lg">Agenda Kalender</h2><p className="text-xs text-slate-500">Event aktif otomatis menekan KBM normal pada kelas/JP yang terdampak.</p></div>
+        <div className="px-5 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"><div><h2 className="font-black text-lg">Agenda Kalender</h2><p className="text-xs text-slate-500">Event aktif otomatis menekan KBM normal pada kelas/JP yang terdampak. Histori tetap tersimpan.</p></div><label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer"><input type="checkbox" checked={showPastGroups} onChange={(event) => setShowPastGroups(event.target.checked)} className="h-4 w-4 accent-teal-600" /> Lihat yang sudah lewat ({pastGroupsCount})</label></div>
         <div className="p-5 space-y-3">
-          {loading ? <div className="py-10 text-center text-slate-500"><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Memuat kalender...</div> : groups.length === 0 ? <div className="py-10 text-center text-slate-400">Belum ada data Kalender Akademik.</div> : groups.map((group) => <div key={group.key} className={`rounded-2xl border p-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4 ${group.status === "ACTIVE" ? "border-teal-200 bg-teal-50/30" : "border-slate-200 bg-slate-50 opacity-70"}`}>
+          {loading ? <div className="py-10 text-center text-slate-500"><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Memuat kalender...</div> : displayedGroups.length === 0 ? <div className="py-10 text-center text-slate-400">{pastGroupsCount > 0 && !showPastGroups ? "Tidak ada agenda aktif atau mendatang. Centang histori untuk melihat yang sudah lewat." : "Belum ada data Kalender Akademik."}</div> : displayedGroups.map((group) => <div key={group.key} className={`rounded-2xl border p-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4 ${group.status === "ACTIVE" ? "border-teal-200 bg-teal-50/30" : "border-slate-200 bg-slate-50 opacity-70"}`}>
             <div className="min-w-0"><div className="flex flex-wrap gap-2 items-center"><span className="font-black text-slate-900">{group.eventName}</span><span className="text-[10px] font-black px-2 py-1 rounded-lg bg-teal-100 text-teal-800">{group.eventType}</span>{group.status !== "ACTIVE" && <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-slate-200 text-slate-600">NONAKTIF</span>}</div><div className="text-sm text-slate-700 mt-1">{dateLabel(group.dateStart)}{group.dateEnd !== group.dateStart ? ` – ${dateLabel(group.dateEnd)}` : ""} • {group.periodStart == null ? "Sehari penuh" : `JP ${group.periodStart}–${group.periodEnd}`}</div><div className="text-xs text-slate-500 mt-1">{group.scope === "ALL" ? "Semua kelas" : group.classNames.join(" • ") || "Kelas tidak terbaca"}</div></div>
             <div className="flex gap-2 shrink-0"><button onClick={() => startEdit(group)} className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-bold flex items-center gap-1"><Edit3 className="w-4 h-4" /> Edit</button><button onClick={() => void toggleActive(group)} className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-bold flex items-center gap-1">{group.status === "ACTIVE" ? <ToggleRight className="w-5 h-5 text-emerald-600" /> : <ToggleLeft className="w-5 h-5 text-slate-400" />} {group.status === "ACTIVE" ? "Aktif" : "Nonaktif"}</button></div>
           </div>)}

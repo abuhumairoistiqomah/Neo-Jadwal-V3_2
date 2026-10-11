@@ -1,3 +1,4 @@
+import { datedInstructionOverridesCalendar } from "../domain/schedule/calendarPriority";
 import React, { useState, useMemo, useEffect } from "react";
 import { buildRoomWeekDays } from "../domain/roomWeek";
 import { classifyRoomOccupancy } from "../domain/roomOccupancy";
@@ -212,11 +213,15 @@ export function JadwalRuangan({
         const targetClass = matchingIncidental ? (matchingIncidental.kelas || s.kelas) : s.kelas;
         // Check if slot is cancelled / replaced by Kalender Akademik
         const academicEvent = getAcademicCalendarEvent(dayInfo.dateStr, targetClass, Number(s.jam_ke), kalenderAkademik);
-        if (academicEvent) {
-          if (matchingIncidental) {
-            pairedIncidentalIds.add(matchingIncidental.id);
-          }
-          return; // Room is not occupied because KBM is cancelled by Kalender Akademik
+        if (academicEvent && !datedInstructionOverridesCalendar({
+          event: academicEvent,
+          isDated: Boolean(matchingIncidental),
+          replacesTeachers: Boolean(matchingIncidental?.replaceTeachers),
+          teacherNames: matchingIncidental ? [matchingIncidental.guru1, matchingIncidental.guru2,
+            matchingIncidental.guru3, matchingIncidental.guru4, matchingIncidental.guru5, matchingIncidental.guru6] : [],
+        })) {
+          if (matchingIncidental) pairedIncidentalIds.add(matchingIncidental.id);
+          return; // No operational teaching on this academic cancellation.
         }
 
         if (matchingIncidental) {
@@ -285,7 +290,12 @@ export function JadwalRuangan({
       const jam = Number(inc.jam_ke);
       // Check if slot is cancelled / replaced by Kalender Akademik
       const academicEvent = getAcademicCalendarEvent(dayInfo.dateStr, inc.kelas, jam, kalenderAkademik);
-      if (academicEvent) return;
+      if (academicEvent && !datedInstructionOverridesCalendar({
+        event: academicEvent,
+        isDated: true,
+        replacesTeachers: Boolean(inc.replaceTeachers),
+        teacherNames: [inc.guru1, inc.guru2, inc.guru3, inc.guru4, inc.guru5, inc.guru6],
+      })) return;
 
       const incRawRoom = (inc.ruangan || "").trim();
       if (!incRawRoom) return;

@@ -1,3 +1,27 @@
+# V3.14.6 RC3.4.8.3.1 — Guest refresh regression test hotfix
+
+Test-only fix based on RC3.4.8.3: `teacher-owned-task-admin-runtime.test.ts` now checks the `if (!isAdmin) { ... }` guest refresh effect and Jakarta date-rollover contact redaction instead of matching obsolete one-line syntax. **No App.tsx, runtime, UI, SQL, or data model change.** The RC3.4.8.3 migration `202610120005_v3_14_6_dated_public_wa_contacts.sql` remains a prerequisite; there is no new migration. See `TRACE_V3_14_6_RC3_4_8_3_1_TEST_REGRESSION.md`.
+
+# V3.14.6 RC3.4.7 — Edit Guru Badal (candidate)
+
+See `TRACE_V3_14_6_RC3_4_7_EDIT_BADAL.md`.
+
+# RC3.4.5 — Multi-Class JP0, Teacher Dashboard, Searchable Dropdown, New-Tab Badal
+
+This candidate builds on RC3.4.4.1. See `TRACE_V3_14_6_RC3_4_5_MULTI_CLASS_JP0_EDITOR_DASHBOARD_BADAL.md` for migration, behavioral notes, and staging smoke tests.
+
+**Before production:** run migration `202610110053_v3_14_6_multi_class_homeroom_leave.sql` on Supabase **staging** first, then run npm test, lint and build on Windows. No change to GAS.
+
+---
+
+> **V3.14.6 RC3.4.4.1 hotfix:** fixes the RC3.4.4 Windows TypeScript compiler errors and a stale rotation test. See `TRACE_V3_14_6_RC3_4_4_1_TYPESCRIPT_RELEASE_GATE.md`.
+
+> **V3.14.6 RC3.4.3:** Quick Edit dan Jadwal Insidental kini membaca ketersediaan guru dari **jadwal efektif tanggal yang dipilih**, termasuk Kalender Akademik dan izin/badal, bukan master mentah. Dropdown operasional bisa dicari dengan mengetik. Tidak ada migration SQL baru khusus RC3.4.3. Baca `TRACE_V3_14_6_RC3_4_3_EFFECTIVE_EDITOR_SEARCH.md`.
+
+> **V3.14.6 RC3.4.2 (Release Candidate):** Jadwal Insidental kini menyembunyikan entri bertanggal lampau secara default, dengan checkbox **Lihat yang sudah lewat (N)**. Histori tetap tersedia di Supabase, tidak dihapus. Paket ini sudah menyertakan perbaikan timeout bulk Kalender Akademik dari RC3.4.1, yang memerlukan SQL `supabase/migrations/202610110052_v3_14_6_calendar_bulk_versioning.sql` pada staging sebelum pengujian. Baca `TRACE_V3_14_6_RC3_4_2_INCIDENTAL_HISTORY_CALENDAR_TIMEOUT.md`.
+
+> **V3.14.6 RC3.4.1 Kalender Bulk Timeout Hotfix:** Kalender Akademik sekarang menyimpan semua target kelas melalui RPC transaksi tunggal dengan satu snapshot versi (bukan satu snapshot per kelas). Wajib jalankan migration `supabase/migrations/202610110052_v3_14_6_calendar_bulk_versioning.sql` di Supabase staging sebelum menguji frontend. Baca `TRACE_V3_14_6_RC3_4_1_CALENDAR_BULK_TIMEOUT.md`.
+
 ## V3.14.6 RC3.4 — Time override per tanggal (staging only)
 
 Insidental and Dashboard Quick Edit can specify a date-only start/end clock for a class/JP without modifying the master timetable. Requires `supabase/migrations/202610110004_v3_14_6_dated_time_overrides.sql`. See `TRACE_V3_14_6_RC3_4_DATED_TIME_OVERRIDE.md` for release order and smoke tests.
@@ -136,3 +160,30 @@ See `TRACE_V3_14_2_EXPORT_ALTERNATING_CONSTRAINT_HOTFIX.md` for design notes and
 **Validation:** syntax parse of 153 TypeScript files passed; targeted TypeScript domain typecheck passed; 269/271 offline regression tests passed with two modules unavailable because this runner lacks React and Supabase dependencies. Windows `npm.cmd test`, `npm.cmd run lint`, `npm.cmd run build`, live database and browser smoke remain required.
 
 Read `TRACE_V3_14_6_RC3_2_INCIDENTAL_SLOT_OWNERSHIP.md` before publishing to Vercel.
+
+
+## V3.14.6 RC3.4.4
+See `TRACE_V3_14_6_RC3_4_4_MOBILE_TASK_HISTORY_TEACHER_STATUS.md` for mobile task access, reversible history filters and conditional teacher-absence red status.
+
+
+### V3.14.6 RC3.4.6
+
+Legacy Log Izin audited soft cancellation, canonical public WA link, and staff-only missing FREE JP amendment for an existing single-day leave. Run migration `202610120001_v3_14_6_legacy_cancel_leave_free_amendment.sql` after previous migrations. See `TRACE_V3_14_6_RC3_4_6_LEGACY_WA_LEAVE_AMENDMENT.md`.
+
+
+## V3.14.6 RC3.4.8 — Supabase-only Runtime (guest + admin)
+
+Admin OFF and Admin ON both load operational timetables from Supabase. Legacy Google Sheets schedule sync and mock fallback are disabled. **Requires staging-tested migration** `202610120003_v3_14_6_guest_supabase_read.sql` before deploying the frontend. See `TRACE_V3_14_6_RC3_4_8_SUPABASE_ONLY_GUEST.md`.
+
+
+## V3.14.6 RC3.4.8.2 — Public badal tasks
+
+Public Supabase guest mode can read substitute teaching instructions and links for current/future valid coverage slots. Requires migration `202610120004_v3_14_6_public_badal_tasks.sql` AFTER guest RPC `202610120003`. See `TRACE_V3_14_6_RC3_4_8_2_PUBLIC_BADAL_TASKS.md`.
+
+### V3.14.6 RC3.4.8.3 — Guest WhatsApp by dated badal
+
+Guest teacher-directory phone numbers remain hidden, but the current/future
+coverage slot provides its absent/substitute teacher WhatsApp contact, expiring
+by the following Jakarta school date. Apply migration
+`202610120005_v3_14_6_dated_public_wa_contacts.sql` after `202610120004`.
+See `TRACE_V3_14_6_RC3_4_8_3_DATED_PUBLIC_WA.md` for privacy, tests and release gate.

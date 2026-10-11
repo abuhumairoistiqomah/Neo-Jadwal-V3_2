@@ -79,7 +79,15 @@ test("admin shell has scrollable navigation and Supabase runtime paths", () => {
   assert.match(app, /overflow-y-auto overscroll-contain/);
   assert.match(app, /refreshFromSupabase/);
   assert.match(app, /signInWithPassword/);
-  assert.match(app, /Admin never bootstraps from Apps Script/);
+  // Assert the actual runtime routes rather than relying on a historical comment.
+  // Admin and guest must both read Supabase, never a Google Sheets fallback.
+  assert.match(app, /new SupabaseScheduleRepository\(\)\.loadSnapshot\(\)/);
+  assert.match(app, /new SupabasePublicScheduleRepository\(\)\.loadPublicState\(\)/);
+  // Guest refresh now lives inside a block so phone contacts can be redacted
+  // before re-fetching the public Supabase snapshot at Jakarta date rollover.
+  assert.match(app, /useEffect\(\(\) => \{\s*if\s*\(!isAdmin\)\s*\{[\s\S]*?void refreshPublicSupabase\(\);[\s\S]*?\}\s*\},\s*\[isAdmin,\s*schoolToday\]\);/);
+  assert.match(app, /log\.tanggal < schoolToday[\s\S]*?whatsapp_guru_izin: null, whatsapp_guru_pengganti: null/);
+  assert.doesNotMatch(app, /fetchFromAppsScript|publicGasBootstrappedRef/);
 });
 
 test("public Drive upload branch runs before any legacy Spreadsheet open in doPost", () => {

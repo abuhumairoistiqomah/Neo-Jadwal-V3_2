@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Ban, CalendarDays, Edit3, Loader2, RefreshCw, RotateCcw, Save, ShieldAlert, ToggleLeft, ToggleRight } from "lucide-react";
 import { getCurrentUserContext, type CurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
+import { getSchoolTodayISO } from "../domain/date";
+import { filterOperationalHistory, isPastSubstituteRule } from "../domain/operationalHistoryVisibility";
 import {
   OperationalRulesRepository,
   type OperationalTeacherRow,
@@ -27,6 +29,8 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ onBack, onChanged }
   const [context, setContext] = useState<CurrentUserContext | null>(null);
   const [teachers, setTeachers] = useState<OperationalTeacherRow[]>([]);
   const [rows, setRows] = useState<SubstituteConstraintAdminRow[]>([]);
+  const [showPastRules, setShowPastRules] = useState(false);
+  const [schoolToday, setSchoolToday] = useState(getSchoolTodayISO);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -47,6 +51,12 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ onBack, onChanged }
 
   const canManage = Boolean(context?.roles.some((role) => role === "ADMIN" || role === "WAKASEK"));
   const teacherById = useMemo(() => new Map(teachers.map((teacher) => [teacher.id, teacher])), [teachers]);
+  const pastRulesCount = rows.filter((row) => isPastSubstituteRule(row, schoolToday)).length;
+  const displayedRules = filterOperationalHistory<SubstituteConstraintAdminRow>(rows, (row) => isPastSubstituteRule(row, schoolToday), showPastRules);
+  useEffect(() => {
+    const timer = window.setInterval(() => setSchoolToday(getSchoolTodayISO()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const resetForm = () => {
     setEditingId(null);
@@ -198,9 +208,9 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ onBack, onChanged }
       </section>
 
       <section className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100"><h2 className="font-black text-lg">Daftar Restriksi</h2><p className="text-xs text-slate-500">Aturan aktif langsung dibaca engine rekomendasi badal.</p></div>
+        <div className="px-5 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"><div><h2 className="font-black text-lg">Daftar Restriksi</h2><p className="text-xs text-slate-500">Aturan aktif langsung dibaca engine rekomendasi badal. Histori tidak dihapus.</p></div><label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer"><input type="checkbox" checked={showPastRules} onChange={(event) => setShowPastRules(event.target.checked)} className="h-4 w-4 accent-red-600" /> Lihat yang sudah lewat ({pastRulesCount})</label></div>
         <div className="p-5 space-y-3">
-          {loading ? <div className="py-10 text-center text-slate-500"><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Memuat restriksi...</div> : rows.length === 0 ? <div className="py-10 text-center text-slate-400">Belum ada restriksi.</div> : rows.map((row) => {
+          {loading ? <div className="py-10 text-center text-slate-500"><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Memuat restriksi...</div> : displayedRules.length === 0 ? <div className="py-10 text-center text-slate-400">{pastRulesCount > 0 && !showPastRules ? "Tidak ada aturan yang berlaku hari ini atau mendatang. Centang histori untuk melihat yang sudah lewat." : "Belum ada restriksi."}</div> : displayedRules.map((row) => {
             const teacher = teacherById.get(row.teacher_id);
             const dayLabel = DAYS.find(([value]) => value === row.day_of_week)?.[1] || "Semua Hari";
             return <div key={row.id} className={`rounded-2xl border p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3 ${row.is_active ? "border-red-200 bg-red-50/40" : "border-slate-200 bg-slate-50 opacity-70"}`}>

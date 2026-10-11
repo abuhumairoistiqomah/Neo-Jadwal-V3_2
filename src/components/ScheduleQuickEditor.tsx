@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, Pencil, Plus, Save, Trash2, X } from "lucide-react";
-import type { JadwalInsidentalItem, ScheduleItem } from "../domain/models";
+import type { JadwalInsidentalItem, KalenderAkademikItem, LogIzinItem, ScheduleItem } from "../domain/models";
+import { buildDatedEditorAvailability } from "../domain/schedule/editorDatedAvailability";
+import { SearchableSelect } from "./ui/SearchableSelect";
 import { normalizeImportKey } from "../domain/scheduleImport";
 import { rankScheduleEditorTeachers, scheduleEditorCandidateLabel } from "../domain/scheduleEditorCandidate";
 import { ScheduleAdminRepository, type ScheduleAdminContext } from "../infrastructure/repositories/scheduleAdminRepository";
@@ -22,6 +24,8 @@ interface ScheduleQuickEditorProps {
   items: ScheduleItem[];
   allSchedules: ScheduleItem[];
   incidentals?: JadwalInsidentalItem[];
+  logs?: LogIzinItem[];
+  kalenderAkademik?: KalenderAkademikItem[];
   initialDate?: string;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
@@ -36,7 +40,7 @@ function inferRotationWeeks(note: string): number {
   return match ? Number(match[1]) : 4;
 }
 
-export const ScheduleQuickEditor: React.FC<ScheduleQuickEditorProps> = ({ items, allSchedules, incidentals = [], initialDate, onClose, onSaved }) => {
+export const ScheduleQuickEditor: React.FC<ScheduleQuickEditorProps> = ({ items, allSchedules, incidentals = [], logs = [], kalenderAkademik = [], initialDate, onClose, onSaved }) => {
   const primary = items[0];
   // Opening a dated effective slot must not leak its temporary clock into
   // the default permanent-edit fields.
@@ -98,6 +102,33 @@ export const ScheduleQuickEditor: React.FC<ScheduleQuickEditorProps> = ({ items,
     setEndTime(timeForInput(existing?.selesai || masterEnd));
   }, [mutationMode, incidentalDate, incidentals, primary?.kelas, primary?.jam_ke, masterStart, masterEnd]);
 
+  // A dated edit starts with the latest effective values for that class/JP.
+  // Switching back to permanent must restore the canonical master, never
+  // accidentally persist an incidental teacher/subject into the master.
+  useEffect(() => {
+    if (!context || !primary) return;
+    const source = mutationMode === "INCIDENTAL"
+      ? datedAvailability.find((row) =>
+          normalizeImportKey(row.kelas) === normalizeImportKey(primary.kelas)
+          && Number(row.jam_ke) === Number(primary.jam_ke))
+      : canonicalMaster;
+    const current = source || canonicalMaster || primary;
+    setSubject(current.mapel || "");
+    setRoomId(current.ruangan || "");
+    setSpecialNote(current.keterangan_khusus || "");
+    const currentMode = parseScheduleClassMode(current.kelasgabung);
+    setAlternating(currentMode === "ALTERNATING");
+    setCombined(currentMode === "COMBINED" || (items.length > 1 && currentMode !== "ALTERNATING"));
+    const names = [current.guru1, current.guru2, current.guru3, current.guru4, current.guru5, current.guru6]
+      .filter(Boolean).map(String);
+    setTeacherIds(names.map((name) => context.teachers.find((teacher) =>
+      [teacher.full_name, teacher.short_name, teacher.legacy_name].some((candidate) =>
+        normalizeImportKey(candidate) === normalizeImportKey(name)))?.id).filter(Boolean) as string[]);
+  // Intentional: only reinitialize when changing date or edit mode, not when
+  // each field is typed or when external data re-renders this modal.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [context, mutationMode, incidentalDate]);
+
   const selectedTeachers = useMemo(() => {
     if (!context) return [];
     return teacherIds.map((id) => context.teachers.find((teacher) => teacher.id === id)).filter(Boolean) as ScheduleAdminContext["teachers"];
@@ -111,13 +142,17 @@ export const ScheduleQuickEditor: React.FC<ScheduleQuickEditorProps> = ({ items,
     return selectedClassName ? [selectedClassName] : items.map((item) => item.kelas);
   }, [context, items, classId]);
 
+  const datedAvailability = useMemo(() => buildDatedEditorAvailability({
+    date: incidentalDate, schedules: allSchedules, incidentals, logs, kalenderAkademik,
+  }), [incidentalDate, allSchedules, incidentals, logs, kalenderAkademik]);
+
   const teacherCandidates = useMemo(() => {
     if (!context) return [];
     const dayName = DAY_OPTIONS.find((option) => option.value === day)?.name || "Senin";
     return rankScheduleEditorTeachers({
       teachers: context.teachers,
       classNames: targetClassNames,
-      schedules: allSchedules,
+      schedules: mutationMode === "INCIDENTAL" ? datedAvailability : allSchedules,
       editingScheduleIds: items.map((item) => item.id),
       dayName,
       period,
@@ -125,7 +160,7 @@ export const ScheduleQuickEditor: React.FC<ScheduleQuickEditorProps> = ({ items,
         ? (alternating ? "ALTERNATING" : combined ? "COMBINED" : "NORMAL")
         : undefined,
     });
-  }, [context, targetClassNames, allSchedules, items, day, period, alternating, combined, mutationMode]);
+  }, [context, targetClassNames, allSchedules, datedAvailability, items, day, period, alternating, combined, mutationMode]);
 
   const teacherWarnings = useMemo(() => {
     const selected = new Set(teacherIds);
@@ -139,7 +174,7 @@ export const ScheduleQuickEditor: React.FC<ScheduleQuickEditorProps> = ({ items,
     if (!context) return out;
     const editingIds = new Set(items.map((item) => item.id));
     const classNames = new Set(targetClassNames.map((name) => normalizeImportKey(name)));
-    allSchedules.forEach((schedule) => {
+    (mutationMode === "INCIDENTAL" ? datedAvailability : allSchedules).forEach((schedule) => {
       if (editingIds.has(schedule.id)) return;
       if (dayNumber(schedule.hari) !== day || Number(schedule.jam_ke) !== period) return;
       if ((mutationMode === "PERMANENT" && alternating) || parseScheduleClassMode(schedule.kelasgabung) === "ALTERNATING") return;
@@ -147,7 +182,7 @@ export const ScheduleQuickEditor: React.FC<ScheduleQuickEditorProps> = ({ items,
       if (roomId && normalizeImportKey(schedule.ruangan) === normalizeImportKey(roomId)) out.push(`Ruangan ${roomId} sudah dipakai ${schedule.kelas} pada slot ini.`);
     });
     return [...new Set(out)];
-  }, [context, items, allSchedules, day, period, roomId, targetClassNames, alternating, mutationMode]);
+  }, [context, items, allSchedules, datedAvailability, day, period, roomId, targetClassNames, alternating, mutationMode]);
 
   const classMode: ScheduleClassMode = alternating ? "ALTERNATING" : combined ? "COMBINED" : "NORMAL";
   const persistedSpecialNote = alternating && !specialNote.trim() ? `1 kali / ${rotationEveryWeeks} minggu` : specialNote;
@@ -247,11 +282,11 @@ Tetap simpan perubahan ini?`)) return;
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Kelas">{items.length === 1 ? <select value={classId} onChange={(e) => setClassId(e.target.value)} disabled={mutationMode === "INCIDENTAL"} className="input disabled:bg-slate-100 disabled:text-slate-500"><option value="">— Pilih Kelas —</option>{context?.classes.filter((row) => row.is_active !== false).map((row) => <option key={row.id} value={row.id}>{row.display_name}</option>)}</select> : <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-sm font-bold text-slate-700">{items.map((item) => item.kelas).join(" + ")}</div>}</Field>
+              <Field label="Kelas">{items.length === 1 ? <SearchableSelect value={classId} onChange={setClassId} disabled={mutationMode === "INCIDENTAL"} placeholder="Cari kelas..." options={[{value: "", label: "— Pilih Kelas —"}, ...(context?.classes.filter((row) => row.is_active !== false).map((row) => ({value: row.id, label: row.display_name})) || [])]} /> : <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-sm font-bold text-slate-700">{items.map((item) => item.kelas).join(" + ")}</div>}</Field>
               <Field label="Mata Pelajaran"><input value={subject} onChange={(e) => setSubject(e.target.value)} className="input" /></Field>
-              <Field label="Ruangan"><select value={roomId} onChange={(e) => setRoomId(e.target.value)} className="input"><option value="">— Tanpa / belum ditentukan —</option>{context?.rooms.filter((room) => room.status === "ACTIVE").map((room) => <option key={room.id} value={room.id}>{room.name} ({room.id})</option>)}</select></Field>
-              <Field label="Hari"><select value={day} onChange={(e) => setDay(Number(e.target.value))} disabled={mutationMode === "INCIDENTAL"} className="input disabled:bg-slate-100 disabled:text-slate-500">{DAY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.name}</option>)}</select></Field>
-              <Field label="JP"><select value={period} onChange={(e) => setPeriod(Number(e.target.value))} disabled={mutationMode === "INCIDENTAL"} className="input disabled:bg-slate-100 disabled:text-slate-500">{[0,1,2,3,4,5,6].map((jp) => <option key={jp} value={jp}>{jp === 0 ? "JP-0 Homeroom" : `JP ${jp}`}</option>)}</select></Field>
+              <Field label="Ruangan"><SearchableSelect value={roomId} onChange={setRoomId} placeholder="Cari ruangan..." options={[{value: "", label: "— Tanpa / belum ditentukan —"}, ...(context?.rooms.filter((room) => room.status === "ACTIVE").map((room) => ({value: room.id, label: `${room.name} (${room.id})`})) || [])]} /></Field>
+              <Field label="Hari"><SearchableSelect value={String(day)} onChange={(next) => setDay(Number(next))} disabled={mutationMode === "INCIDENTAL"} placeholder="Cari hari..." options={DAY_OPTIONS.map((option) => ({value: String(option.value), label: option.name}))} /></Field>
+              <Field label="JP"><SearchableSelect value={String(period)} onChange={(next) => setPeriod(Number(next))} disabled={mutationMode === "INCIDENTAL"} placeholder="Cari JP..." options={[0,1,2,3,4,5,6].map((jp) => ({value: String(jp), label: jp === 0 ? "JP-0 Homeroom" : `JP ${jp}`}))} /></Field>
               <Field label="Mulai"><input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={mutationMode === "INCIDENTAL" && !useDatedTime} className="input disabled:bg-slate-100 disabled:text-slate-500" /></Field>
               <Field label="Selesai"><input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={mutationMode === "INCIDENTAL" && !useDatedTime} className="input disabled:bg-slate-100 disabled:text-slate-500" /></Field>
             </div>
@@ -275,19 +310,16 @@ Tetap simpan perubahan ini?`)) return;
             {alternating && (
               <div className="rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
                 <Field label="Pola Pergantian">
-                  <select
-                    value={rotationEveryWeeks}
-                    onChange={(e) => {
-                      const next = Number(e.target.value);
+                  <SearchableSelect
+                    value={String(rotationEveryWeeks)}
+                    placeholder="Cari pola rotasi..."
+                    options={[2,3,4].map((weeks) => ({value: String(weeks), label: `1 kali / ${weeks} minggu`}))}
+                    onChange={(value) => {
+                      const next = Number(value);
                       setRotationEveryWeeks(next);
                       setSpecialNote((current) => /^\s*(?:1\s*kali\s*\/\s*)?[234]\s*minggu\s*$/i.test(current) || !current.trim() ? `1 kali / ${next} minggu` : current);
                     }}
-                    className="input"
-                  >
-                    <option value={2}>1 kali / 2 minggu</option>
-                    <option value={3}>1 kali / 3 minggu</option>
-                    <option value={4}>1 kali / 4 minggu</option>
-                  </select>
+                  />
                 </Field>
                 <p className="mt-2 text-xs font-semibold text-violet-700">Mode ini disimpan sebagai <strong>ALTERNATING</strong>, sehingga engine kelas gabung tidak akan menggabungkannya secara otomatis.</p>
               </div>
@@ -295,7 +327,7 @@ Tetap simpan perubahan ini?`)) return;
 
             <div className="rounded-2xl border border-slate-200 p-4">
               <div className="flex items-center justify-between"><div><h3 className="font-black text-slate-900">Guru Pengampu</h3><p className="text-xs text-slate-500">Urutan pertama = guru utama.</p></div><span className="text-xs font-bold text-slate-400">{teacherIds.length}/6</span></div>
-              <div className="mt-3 space-y-2">{teacherIds.map((teacherId, index) => <div key={`${teacherId}-${index}`} className="flex items-center gap-2"><select value={teacherId} onChange={(e) => setTeacherIds((current) => current.map((value, i) => i === index ? e.target.value : value))} className="input flex-1">{teacherCandidates.map((candidate) => <option key={candidate.teacher.id} value={candidate.teacher.id}>{scheduleEditorCandidateLabel(candidate)}</option>)}</select><button onClick={() => setTeacherIds((current) => current.filter((_, i) => i !== index))} className="rounded-lg bg-rose-50 p-2 text-rose-600"><Trash2 className="w-4 h-4" /></button></div>)}</div>
+              <div className="mt-3 space-y-2">{teacherIds.map((teacherId, index) => <div key={`${teacherId}-${index}`} className="flex items-center gap-2"><SearchableSelect className="flex-1" value={teacherId} onChange={(next) => setTeacherIds((current) => current.map((value, i) => i === index ? next : value))} placeholder="Cari nama guru..." options={teacherCandidates.map((candidate) => ({value: candidate.teacher.id, label: scheduleEditorCandidateLabel(candidate)}))} /><button onClick={() => setTeacherIds((current) => current.filter((_, i) => i !== index))} className="rounded-lg bg-rose-50 p-2 text-rose-600"><Trash2 className="w-4 h-4" /></button></div>)}</div>
               {teacherIds.length < 6 && <button onClick={() => { const candidate = teacherCandidates.find((entry) => !teacherIds.includes(entry.teacher.id))?.teacher; if (candidate) setTeacherIds((current) => [...current, candidate.id]); }} className="mt-3 inline-flex items-center gap-1 rounded-lg bg-blue-50 px-3 py-2 text-xs font-black text-blue-700"><Plus className="w-4 h-4" /> Tambah Guru</button>}
             </div>
 
@@ -304,7 +336,7 @@ Tetap simpan perubahan ini?`)) return;
             {teacherWarnings.length > 0 && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
               <div className="flex items-center gap-2 font-black text-amber-900"><AlertTriangle className="w-5 h-5 text-amber-700" /><span>{teacherWarnings.length} warning potensi bentrok guru</span></div>
               <ul className="mt-2 list-disc space-y-1 pl-5 text-xs font-semibold text-amber-800">{teacherWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
-              <p className="mt-2 text-xs text-amber-700">Warning tidak mengunci editor. Admin dapat tetap menyimpan setelah konfirmasi.</p>
+              <p className="mt-2 text-xs text-amber-700">{mutationMode === "INCIDENTAL" ? "Dihitung dari jadwal efektif tanggal yang dipilih (termasuk Kalender Akademik dan izin/badal). " : "Dihitung dari jadwal master mingguan. "}Warning tidak mengunci editor; admin dapat menyimpan setelah konfirmasi.</p>
             </div>}
 
             <div className={`rounded-2xl border p-4 ${hardConflicts.length ? (mutationMode === "INCIDENTAL" ? "border-amber-200 bg-amber-50" : "border-rose-200 bg-rose-50") : "border-emerald-200 bg-emerald-50"}`}>

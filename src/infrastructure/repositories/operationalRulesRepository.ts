@@ -279,47 +279,42 @@ export class OperationalRulesRepository {
     const classIds = Array.from(new Set((input.classIds || []).filter(Boolean)));
     if (input.scope === "CLASS" && classIds.length === 0) throw new Error("Pilih minimal satu kelas.");
 
+    // RC3.4.1: one atomic RPC transaction for any group size. Previously each
+    // inserted class triggered a full schedule-version snapshot (SQLSTATE 57014
+    // on large calendar events), and browser-side revision had partial-write risk.
     const groupCode = input.existingRowIds?.length ? buildCalendarGroupCode() : (clean(input.groupCode) || buildCalendarGroupCode());
-    const targets = input.scope === "ALL" ? [null] : classIds;
-    const payload = targets.map((classId) => ({
-      admin_group_code: groupCode,
-      legacy_event_code: null,
-      date_start: input.dateStart,
-      date_end: input.dateEnd,
-      event_name: eventName,
-      event_type: eventType,
-      scope: input.scope,
-      class_id: classId,
-      period_start: hasStart ? Number(input.periodStart) : null,
-      period_end: hasEnd ? Number(input.periodEnd) : null,
-      status: "ACTIVE",
-    }));
-
-    // Insert new revision *before* inactivating prior revision. A failed insert
-    // must never cause the previously active calendar event to disappear.
-    const { data: inserted, error } = await client.from("academic_events").insert(payload).select("id");
-    if (error) throw error;
-    if (input.existingRowIds?.length) {
-      const { error: updateError } = await client
-        .from("academic_events")
-        .update({ status: "INACTIVE" })
-        .in("id", input.existingRowIds);
-      if (updateError) {
-        // Best-effort compensation for non-transactional browser writes.
-        const newIds = (inserted || []).map((item: { id: string }) => item.id);
-        if (newIds.length) await client.from("academic_events").update({ status: "INACTIVE" }).in("id", newIds);
-        throw updateError;
+    const { error } = await client.rpc("ejadwal_save_academic_event_group_v2", {
+      p_existing_row_ids: input.existingRowIds || [],
+      p_group_code: groupCode,
+      p_date_start: input.dateStart,
+      p_date_end: input.dateEnd,
+      p_event_name: eventName,
+      p_event_type: eventType,
+      p_scope: input.scope,
+      p_class_ids: input.scope === "CLASS" ? classIds : [],
+      p_period_start: hasStart ? Number(input.periodStart) : null,
+      p_period_end: hasEnd ? Number(input.periodEnd) : null,
+    });
+    if (error) {
+      if (error.code === "PGRST202" || error.code === "42883") {
+        throw new Error("RPC Kalender Akademik belum tersedia. Jalankan migration 202610110052_v3_14_6_calendar_bulk_versioning.sql di Supabase, lalu reload schema cache.");
       }
+      throw error;
     }
   }
 
   async setAcademicEventGroupActive(rowIds: string[], active: boolean): Promise<void> {
     if (!rowIds.length) return;
     const client = requireSupabaseClient();
-    const { error } = await client
-      .from("academic_events")
-      .update({ status: active ? "ACTIVE" : "INACTIVE" })
-      .in("id", rowIds);
-    if (error) throw error;
+    const { error } = await client.rpc("ejadwal_set_academic_event_group_active_v2", {
+      p_row_ids: Array.from(new Set(rowIds)),
+      p_active: active,
+    });
+    if (error) {
+      if (error.code === "PGRST202" || error.code === "42883") {
+        throw new Error("RPC Kalender Akademik belum tersedia. Jalankan migration 202610110052_v3_14_6_calendar_bulk_versioning.sql di Supabase, lalu reload schema cache.");
+      }
+      throw error;
+    }
   }
 }

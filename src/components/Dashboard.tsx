@@ -8,11 +8,14 @@ import {
 } from "../types";
 import { JAM_TIME_MAP } from "../constants/schedule";
 import { teachingSessionSignature } from "../domain/schedule/teachingSession";
-import { buildDashboardEffectiveDay, getDashboardClassSlotItems } from "../domain/schedule/dashboardEffectiveDay";
+import { getTeacherUnavailableStatus } from "../domain/dashboardTeacherUnavailable";
+import type { SubstituteConstraint } from "../domain/substituteAvailability";
+import { buildDashboardEffectiveDay, getDashboardClassSlotItems, selectOperationalTeacherSchedules } from "../domain/schedule/dashboardEffectiveDay";
 import { 
   Search, Calendar, CalendarDays, BookOpen, Clock, Users, UserPlus, GraduationCap,
   History, BarChart2, Shield, User, ChevronRight, X, Table, ChevronDown, Bell, Eye, EyeOff, AlertTriangle, ClipboardCheck, Pencil 
 } from "lucide-react";
+import { getSchoolTodayISO } from "../domain/date";
 import { buildTaskRequestWhatsappMessage, findTeacherByName, whatsappDigits } from "../domain/whatsappTemplates";
 
 interface DashboardProps {
@@ -22,6 +25,7 @@ interface DashboardProps {
   jadwalInsidental?: JadwalInsidentalItem[];
   masterRuangan?: MasterRuanganItem[];
   kalenderAkademik?: KalenderAkademikItem[];
+  substituteConstraints?: SubstituteConstraint[];
   selectedTeacher: string;
   setSelectedTeacher: (name: string) => void;
   isAdmin: boolean;
@@ -36,6 +40,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   jadwalInsidental = [],
   masterRuangan = [],
   kalenderAkademik = [],
+  substituteConstraints = [],
   selectedTeacher,
   setSelectedTeacher,
   isAdmin,
@@ -170,11 +175,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   // Find current teacher details
   const currentTeacherObj = teachers.find(t => t.nama === selectedTeacher);
-  const requestTaskViaWhatsapp = (item: { guru_izin: string; jam_ke: number; kelas: string; mapel: string }) => {
+  const requestTaskViaWhatsapp = (item: { guru_izin: string; jam_ke: number; kelas: string; mapel: string; whatsapp_guru_izin?: string | null }) => {
+    // Guest phone numbers are attached to a dated coverage slot, NEVER to the
+    // public teacher directory. Old browser tabs cannot reuse expired contacts.
+    if (!isAdmin && selectedDate < getSchoolTodayISO()) {
+      window.alert("Kontak WhatsApp untuk penugasan yang sudah lewat tidak tersedia pada mode tamu.");
+      return;
+    }
     const absentTeacher = findTeacherByName(teachers, item.guru_izin);
-    const phone = whatsappDigits(absentTeacher?.whatsapp_e164);
+    const phone = whatsappDigits(item.whatsapp_guru_izin || (isAdmin ? absentTeacher?.whatsapp_e164 : null));
     if (!phone) {
-      window.alert(`Nomor WhatsApp ${item.guru_izin} belum tersedia di Master Guru.`);
+      window.alert(`Nomor WhatsApp ${item.guru_izin} tidak tersedia untuk penugasan pada tanggal ini.`);
       return;
     }
     const message = buildTaskRequestWhatsappMessage({
@@ -245,7 +256,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
         (!explicitTeacherReplacement || slotTeachers.has(String(log.guru_izin || "").trim().toLowerCase()))
       );
 
-      const academicEvent = getAcademicCalendarEvent(selectedDate, selectedClass, Number(jamKe), kalenderAkademik);
+      const academicEvent = periodMasterItems.some((item) => item.isActive)
+        ? null
+        : getAcademicCalendarEvent(selectedDate, selectedClass, Number(jamKe), kalenderAkademik);
 
       const hasMaster = periodMasterItems.length > 0;
       const hasIncidental = periodMasterItems.some(item => item.isOverridden);
@@ -416,7 +429,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
     let filtered = processedMasterSchedulesForDay.filter(s => {
       const gurus = [s.guru1, s.guru2, s.guru3, s.guru4, s.guru5, s.guru6];
-      return gurus.some(g => g && g.trim().toLowerCase() === sTeacherLower);
+      return gurus.some(g => g && g.trim().toLowerCase() === sTeacherLower)
+        || s.absentTeachers.some((name) => name.trim().toLowerCase() === sTeacherLower);
     });
 
     // Layer 2: Native Speaker / Syaikh Filtering
@@ -425,7 +439,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         const ketKhusus = (s.keterangan_khusus || "").toLowerCase();
         const isRoutineNative = ketKhusus.includes("native");
         const isIncidentalNative = s.isOverridden === true; // guru1-6 is already checked in filtered
-        return isRoutineNative || isIncidentalNative;
+        return isRoutineNative || isIncidentalNative || s.absentTeachers.some((name) => name.trim().toLowerCase() === sTeacherLower);
       });
     }
 
@@ -435,7 +449,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   // Group regular schedule items by jam_ke
   const groupedSchedules = useMemo(() => {
     const groups: Record<number, typeof teacherRegularSchedules> = {};
-    teacherRegularSchedules.forEach(item => {
+    selectOperationalTeacherSchedules(teacherRegularSchedules).forEach(item => {
       if (!groups[item.jam_ke]) {
         groups[item.jam_ke] = [];
       }
@@ -555,6 +569,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         isConflict: false,
         isInval: true,
         guru_izin: firstLog.guru_izin,
+        whatsapp_guru_izin: logsInSession.find((log) => log.whatsapp_guru_izin)?.whatsapp_guru_izin || null,
         alasan: firstLog.alasan,
         tugas: taskValues.join("\n"),
         items: schedulesInSession
@@ -568,9 +583,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
     const regularWithConflictFlags = groupedSchedules.map(reg => {
       const hasInvalConflict = invalJamSet.has(reg.jam_ke);
-      const calEvent = getAcademicCalendarEvent(selectedDate, reg.kelas, reg.jam_ke, kalenderAkademik);
+      // Calendar cancellation belongs to the effective rows, not any other
+      // class represented in the same teacher's JP group.
+      const calEvent = reg.items.find((row) => row.isSuppressedByAcademicCalendar)?.academicEvent
+        || null;
       return {
         ...reg,
+        teacherUnavailable: getTeacherUnavailableStatus({
+          teacherId: currentTeacherObj?.id,
+          teacherName: selectedTeacher,
+          date: selectedDate,
+          period: Number(reg.jam_ke),
+          constraints: substituteConstraints,
+          logs,
+        }),
         isCancelledForInval: hasInvalConflict,
         isCancelledForKalender: Boolean(calEvent),
         academicEvent: calEvent
@@ -581,6 +607,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const calEvent = getAcademicCalendarEvent(selectedDate, inv.kelas, inv.jam_ke, kalenderAkademik);
       return {
         ...inv,
+        teacherUnavailable: getTeacherUnavailableStatus({
+          teacherId: currentTeacherObj?.id,
+          teacherName: selectedTeacher,
+          date: selectedDate,
+          period: Number(inv.jam_ke),
+          constraints: substituteConstraints,
+          logs,
+        }),
         isCancelledForInval: false,
         isCancelledForKalender: Boolean(calEvent),
         academicEvent: calEvent
@@ -599,7 +633,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       }
       return 0;
     });
-  }, [groupedSchedules, invalSchedules, selectedDate, kalenderAkademik]);
+  }, [groupedSchedules, invalSchedules, selectedDate, kalenderAkademik, currentTeacherObj?.id, selectedTeacher, substituteConstraints, logs]);
 
   // Extract Wali kelas class name
   const waliClass = useMemo(() => {
@@ -1081,7 +1115,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     let labelText = "Kelas Tunggal";
                     let tagClass = "bg-blue-200/70 text-blue-900 border border-blue-300";
 
-                    if (item.isCancelledForKalender && item.academicEvent) {
+                    if (item.teacherUnavailable.unavailable && !item.isInval) {
+                      cardBgClass = "bg-rose-50 hover:bg-rose-100/60 border-rose-300 border-l-4 border-l-rose-600 text-rose-950";
+                      badgeClass = "bg-rose-100 text-rose-900 border border-rose-300 font-bold";
+                      dotClass = "bg-rose-600";
+                      labelText = item.teacherUnavailable.cause === "ASSIGNMENT" ? "Tidak Mengajar • Penugasan" : "Izin Mengajar";
+                      tagClass = "bg-rose-200 text-rose-950 border border-rose-300 font-extrabold";
+                    } else if (item.isCancelledForKalender && item.academicEvent) {
                       cardBgClass = "bg-rose-50 hover:bg-rose-100/60 border-rose-200 text-rose-950 font-medium";
                       badgeClass = "bg-rose-100 text-rose-900 border border-rose-300 font-bold";
                       dotClass = "bg-rose-500";
@@ -1179,6 +1219,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               <h4 className="font-bold text-lg">{item.mapel}</h4>
                             )}
 
+                            {item.teacherUnavailable.unavailable && !item.isInval && (
+                              <p className="mt-2 text-xs font-extrabold text-rose-900 bg-white/90 border border-rose-300 rounded-lg px-3 py-2 w-fit">
+                                {item.teacherUnavailable.cause === "ASSIGNMENT"
+                                  ? "⛔ Tidak mengajar normal pada JP ini karena penugasan/kegiatan sekolah."
+                                  : "⛔ Guru izin pada JP ini. Jadwal normal tidak berlaku bagi guru tersebut."}
+                              </p>
+                            )}
+
                             {/* Cancelled Banner if conflict with Inval */}
                             {item.isCancelledForInval && (
                               <p className="text-xs font-bold text-red-700 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg mt-1 w-fit shadow-2xs flex items-center gap-1.5">
@@ -1211,13 +1259,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                 ) : (
                                   <div className="mt-2 flex flex-wrap items-center gap-2">
                                     <span className="text-[11px] font-bold text-amber-800 bg-amber-100 border border-amber-200 rounded-lg px-2.5 py-1.5">⚠ Tugas belum dikirim guru pengampu</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => requestTaskViaWhatsapp(item)}
-                                      className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-sm transition-colors flex items-center gap-1.5 cursor-pointer"
-                                    >
-                                      <span>💬 Minta Tugas via WhatsApp</span>
-                                    </button>
+                                    {!isAdmin && selectedDate < getSchoolTodayISO() ? (
+                                      <span className="text-[11px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                                        Kontak WA sudah kedaluwarsa
+                                      </span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => requestTaskViaWhatsapp(item)}
+                                        className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-sm transition-colors flex items-center gap-1.5 cursor-pointer"
+                                      >
+                                        <span>💬 Minta Tugas via WhatsApp</span>
+                                      </button>
+                                    )}
                                   </div>
                                 )}
                               </div>

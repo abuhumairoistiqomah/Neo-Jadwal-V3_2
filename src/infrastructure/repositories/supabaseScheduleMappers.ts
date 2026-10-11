@@ -119,6 +119,10 @@ export interface CoverageSlotRow {
   absent_teacher_name_snapshot?: string | null;
   substitute_teacher_id?: string | null;
   substitute_teacher_name_snapshot?: string | null;
+  /** Sanitized by the public RPC; always null on historical coverage. */
+  absent_teacher_whatsapp_e164?: string | null;
+  substitute_teacher_whatsapp_e164?: string | null;
+  source?: string | null;
   reason_snapshot?: string | null;
   status?: string | null;
   created_at?: string | null;
@@ -417,6 +421,10 @@ export function mapCoverageRows(
       row.substitute_teacher_id,
       row.substitute_teacher_name_snapshot,
     ),
+    source: row.source || undefined,
+    substitute_teacher_id: row.substitute_teacher_id || null,
+    whatsapp_guru_izin: row.absent_teacher_whatsapp_e164 || null,
+    whatsapp_guru_pengganti: row.substitute_teacher_whatsapp_e164 || null,
     tugas: taskTextForCoverage(row.id) || undefined,
     created_at: row.created_at || undefined,
   }));

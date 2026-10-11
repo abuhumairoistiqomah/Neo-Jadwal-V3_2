@@ -1,3 +1,4 @@
+import { datedInstructionOverridesCalendar } from "./calendarPriority";
 import { JAM_TIME_MAP } from "../../constants/schedule";
 import { getAcademicCalendarEvent } from "../calendar";
 import { isClassMatch } from "../class";
@@ -278,6 +279,18 @@ function applyAcademicCalendar(
   );
 
   if (!event) return item;
+
+  // A specifically assigned dated teaching replacement has greater operational
+  // specificity than the cancellation of regular KBM. E.g. when a school has
+  // Rumah Tahfidz, 04 INTER's normal subject is cancelled but a teacher may be
+  // explicitly reassigned via incidental to exam preparation in 09 AE/MQ.
+  // Room-only changes (without replacement team/subject) do NOT resurrect KBM.
+  if (datedInstructionOverridesCalendar({
+    event, isDated: item.source !== "MASTER",
+    replacesTeachers: Boolean(item.teacherTeamReplaced), teacherNames: item.scheduledTeachers,
+  })) {
+    return { ...item, academicEvent: event, isSuppressedByAcademicCalendar: false, isActive: true };
+  }
 
   return {
     ...item,

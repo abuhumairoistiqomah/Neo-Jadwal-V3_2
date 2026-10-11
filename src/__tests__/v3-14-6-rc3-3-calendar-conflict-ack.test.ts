@@ -66,12 +66,15 @@ test("RC3.3 calendar errors show Supabase detail and code, not object Object", (
   assert.match(getErrorMessage(postgrestLike), /42501/);
 });
 
-test("RC3.3 calendar edit writes revision before deactivating previous event", () => {
+test("RC3.4.1 calendar revision is atomic and versions once after complete batch", () => {
   const code = readFileSync("src/infrastructure/repositories/operationalRulesRepository.ts", "utf8");
-  const start = code.indexOf("async saveAcademicEventGroup");
-  const finish = code.indexOf("async setAcademicEventGroupActive", start);
-  const portion = code.slice(start, finish);
-  assert.ok(portion.indexOf('.insert(payload).select("id")') < portion.indexOf('.update({ status: "INACTIVE" })'));
+  const migration = readFileSync("supabase/migrations/202610110052_v3_14_6_calendar_bulk_versioning.sql", "utf8");
+  assert.match(code, /client\.rpc\("ejadwal_save_academic_event_group_v2"/);
+  assert.match(migration, /perform set_config\('ejadwal\.calendar_bulk_mode', 'on', true\)/);
+  assert.match(migration, /ACADEMIC_EVENT_GROUP_PUBLISH/);
+  const block = migration.slice(migration.indexOf("create or replace function public.ejadwal_save_academic_event_group_v2"));
+  assert.ok(block.indexOf("insert into public.academic_events(") < block.indexOf("update public.academic_events set status = 'INACTIVE'"));
+  assert.ok(block.indexOf("update public.academic_events set status = 'INACTIVE'") < block.indexOf("'ACADEMIC_EVENT_GROUP_PUBLISH'"));
 });
 
 test("RC3.3 UI uses canonical classes and local reversible conflict visibility", () => {
