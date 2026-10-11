@@ -1,0 +1,40 @@
+{
+  "name": "e-jadwal-v3-14-5-teacher-png",
+  "private": true,
+  "version": "3.14.5",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview",
+    "clean": "rm -rf dist server.js",
+    "lint": "tsc --noEmit",
+    "test": "tsx --test src/__tests__/domain-baseline.test.ts src/__tests__/effective-schedule.test.ts src/__tests__/supabase-mappers.test.ts src/__tests__/substitute-availability.test.ts src/__tests__/legacy-migration.test.ts src/__tests__/migration-hardening.test.ts src/__tests__/consumer-cutover.test.ts src/__tests__/jadwal-kelas-cutover.test.ts src/__tests__/supabase-pagination.test.ts src/__tests__/jadwal-kelas-visual.test.ts src/__tests__/jadwal-ruangan-cutover.test.ts src/__tests__/availability-cutover.test.ts src/__tests__/inval-cutover.test.ts src/__tests__/inval-write.test.ts src/__tests__/inval-performance.test.ts src/__tests__/inval-session-grouping.test.ts src/__tests__/leave-request.test.ts src/__tests__/leave-approval.test.ts src/__tests__/task-resources.test.ts src/__tests__/teacher-owned-task-admin-runtime.test.ts src/__tests__/v3-12-5-dashboard-task-recovery.test.ts src/__tests__/v3-13-admin-master-data.test.ts src/__tests__/v3-13-1-schedule-import.test.ts src/__tests__/v3-13-2-smart-editor-waiting-expiry.test.ts src/__tests__/v3-13-3-operational-rules.test.ts src/__tests__/v3-13-4-schedule-mutation.test.ts src/__tests__/v3-13-5-syaikh-import-class-quick-edit.test.ts src/__tests__/v3-13-6-versioning-conflict-homeroom-edit.test.ts src/__tests__/v3-13-7-operational-action-center.test.ts src/__tests__/v3-14-management-analytics.test.ts src/__tests__/v3-14-1-ux-export-rotation-hotfix.test.ts src/__tests__/v3-14-2-export-alternating-constraint-hotfix.test.ts src/__tests__/v3-14-2-1-inval-normal-teaching-block-hotfix.test.ts src/__tests__/v3-14-3-class-png-analytics-fix.test.ts src/__tests__/v3-14-4-class-effective-week-full-png.test.ts src/__tests__/v3-14-5-teacher-png-class-pdf-removal.test.ts",
+    "test:watch": "tsx --test --watch src/__tests__/domain-baseline.test.ts src/__tests__/effective-schedule.test.ts src/__tests__/supabase-mappers.test.ts src/__tests__/substitute-availability.test.ts src/__tests__/legacy-migration.test.ts src/__tests__/migration-hardening.test.ts src/__tests__/consumer-cutover.test.ts src/__tests__/jadwal-kelas-cutover.test.ts src/__tests__/supabase-pagination.test.ts src/__tests__/jadwal-kelas-visual.test.ts src/__tests__/jadwal-ruangan-cutover.test.ts src/__tests__/availability-cutover.test.ts src/__tests__/inval-cutover.test.ts src/__tests__/inval-write.test.ts src/__tests__/inval-performance.test.ts src/__tests__/inval-session-grouping.test.ts src/__tests__/leave-request.test.ts src/__tests__/leave-approval.test.ts src/__tests__/task-resources.test.ts src/__tests__/teacher-owned-task-admin-runtime.test.ts src/__tests__/v3-12-5-dashboard-task-recovery.test.ts src/__tests__/v3-13-admin-master-data.test.ts src/__tests__/v3-13-1-schedule-import.test.ts src/__tests__/v3-13-2-smart-editor-waiting-expiry.test.ts src/__tests__/v3-13-3-operational-rules.test.ts src/__tests__/v3-13-4-schedule-mutation.test.ts src/__tests__/v3-13-5-syaikh-import-class-quick-edit.test.ts src/__tests__/v3-13-6-versioning-conflict-homeroom-edit.test.ts src/__tests__/v3-13-7-operational-action-center.test.ts src/__tests__/v3-14-management-analytics.test.ts src/__tests__/v3-14-1-ux-export-rotation-hotfix.test.ts src/__tests__/v3-14-2-export-alternating-constraint-hotfix.test.ts src/__tests__/v3-14-2-1-inval-normal-teaching-block-hotfix.test.ts src/__tests__/v3-14-3-class-png-analytics-fix.test.ts src/__tests__/v3-14-4-class-effective-week-full-png.test.ts src/__tests__/v3-14-5-teacher-png-class-pdf-removal.test.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^2.4.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "html2canvas": "^1.4.1",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "vite": "^6.2.3",
+    "@supabase/supabase-js": "2.109.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "autoprefixer": "^10.4.21",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3"
+  }
+}

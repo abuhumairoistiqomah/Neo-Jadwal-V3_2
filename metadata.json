@@ -1,0 +1,8 @@
+{
+  "name": "Sistem Informasi Akademik \u0026 Guru Pengganti V3",
+  "description": "Sistem Manajemen Jadwal Pelajaran dan Guru Pengganti (Inval) Sekolah Versi 3",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,600 @@
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  ArrowLeft,
+  CalendarDays,
+  CheckCircle2,
+  ClipboardCheck,
+  Clock3,
+  Send,
+  UserRound,
+  AlertTriangle,
+  Paperclip,
+  UploadCloud,
+  Link2,
+} from "lucide-react";
+import type {
+  JadwalInsidentalItem,
+  KalenderAkademikItem,
+  LogIzinItem,
+  ScheduleItem,
+  Teacher,
+} from "../domain/models";
+import {
+  buildPublicLeaveSubmission,
+  buildTeacherLeaveSlots,
+  type LeaveRequestType,
+} from "../domain/leaveRequest";
+import { syncTaskResourcesWithText } from "../domain/taskResources";
+import { saveStoredTaskAccess } from "../domain/taskRecovery";
+import { uploadPublicLeaveTaskFile, type PublicLeaveTaskUploadResult } from "../infrastructure/drive/publicLeaveTaskDriveBridge";
+import { SupabasePublicLeaveRepository } from "../infrastructure/repositories/supabasePublicLeaveRepository";
+import { isSupabaseConfigured } from "../infrastructure/supabase/client";
+
+interface LeaveRequestFormProps {
+  teachers: Teacher[];
+  schedules: ScheduleItem[];
+  logs?: LogIzinItem[];
+  jadwalInsidental?: JadwalInsidentalItem[];
+  kalenderAkademik?: KalenderAkademikItem[];
+  selectedTeacher: string;
+  driveBridgeUrl?: string;
+  onBack: () => void;
+}
+
+function localDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateIndo(value: string): string {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return value;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("id-ID", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function sourceLabel(source: string): string {
+  if (source === "INCIDENTAL_ADDITIONAL") return "Insidental tambahan";
+  if (source === "INCIDENTAL_OVERRIDE") return "Jadwal insidental";
+  return "Jadwal reguler";
+}
+
+export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
+  teachers,
+  schedules,
+  logs = [],
+  jadwalInsidental = [],
+  kalenderAkademik = [],
+  selectedTeacher,
+  driveBridgeUrl = "",
+  onBack,
+}) => {
+  const sortedTeachers = useMemo(
+    () => [...teachers]
+      .filter((teacher) => String(teacher.nama || "").trim())
+      .sort((a, b) => a.nama.localeCompare(b.nama, "id-ID", { sensitivity: "base" })),
+    [teachers],
+  );
+
+  const selectedTeacherExists = useMemo(
+    () => sortedTeachers.some((teacher) => teacher.nama === selectedTeacher),
+    [sortedTeachers, selectedTeacher],
+  );
+
+  const [teacherName, setTeacherName] = useState(() => selectedTeacherExists ? selectedTeacher : "");
+  const [teacherTouched, setTeacherTouched] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState(localDateString);
+  const [requestType, setRequestType] = useState<LeaveRequestType>("FULL_DAY");
+  const [reason, setReason] = useState("");
+  const [detail, setDetail] = useState("");
+  const [selectedSlotKeys, setSelectedSlotKeys] = useState<Set<string>>(new Set());
+  const [taskTextByPeriod, setTaskTextByPeriod] = useState<Record<number, string>>({});
+  const [uploadedByPeriod, setUploadedByPeriod] = useState<Record<number, PublicLeaveTaskUploadResult[]>>({});
+  const [pendingFilesByPeriod, setPendingFilesByPeriod] = useState<Record<number, File[]>>({});
+  const [uploadingPeriod, setUploadingPeriod] = useState<number | null>(null);
+  const [uploadError, setUploadError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState<{
+    requestId: string;
+    requestCode: string;
+    slotCount: number;
+    teachingSlotCount: number;
+    freePeriodCount: number;
+    taskUploadToken: string;
+    taskUploadExpiresAt: string;
+    scheduleDate: string;
+    teachingPeriods: Array<{ period: number; classCode: string; subject: string }>;
+  } | null>(null);
+
+  const repository = useMemo(() => new SupabasePublicLeaveRepository(), []);
+
+  useEffect(() => {
+    if (teacherTouched) return;
+    if (selectedTeacher && sortedTeachers.some((teacher) => teacher.nama === selectedTeacher)) {
+      setTeacherName(selectedTeacher);
+    } else if (!selectedTeacher) {
+      setTeacherName("");
+    }
+  }, [selectedTeacher, sortedTeachers, teacherTouched]);
+
+  const availableSlots = useMemo(
+    () => buildTeacherLeaveSlots({
+      teacherName,
+      teacher: sortedTeachers.find((teacher) => teacher.nama === teacherName),
+      scheduleDate,
+      schedules,
+      jadwalInsidental,
+      logs,
+      kalenderAkademik,
+    }),
+    [teacherName, scheduleDate, schedules, jadwalInsidental, logs, kalenderAkademik, sortedTeachers],
+  );
+
+  useEffect(() => {
+    const availableKeys = new Set(availableSlots.map((slot) => slot.key));
+    setSelectedSlotKeys((current) => {
+      if (requestType === "FULL_DAY") return availableKeys;
+      return new Set([...current].filter((key) => availableKeys.has(key)));
+    });
+  }, [availableSlots, requestType]);
+
+  const selectedSlots = useMemo(
+    () => availableSlots.filter((slot) => selectedSlotKeys.has(slot.key)),
+    [availableSlots, selectedSlotKeys],
+  );
+
+  const toggleSlot = (key: string) => {
+    if (requestType === "FULL_DAY") return;
+    setSelectedSlotKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const handleRequestType = (type: LeaveRequestType) => {
+    setRequestType(type);
+    if (type === "FULL_DAY") {
+      setSelectedSlotKeys(new Set(availableSlots.map((slot) => slot.key)));
+    }
+  };
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setSuccess(null);
+
+    if (!isSupabaseConfigured) {
+      setError("Supabase belum dikonfigurasi di .env.local. Pengajuan belum dapat dikirim.");
+      return;
+    }
+
+    try {
+      const tasks = selectedSlots
+        .filter((slot) => slot.periodType === "TEACHING" && slot.period > 0)
+        .map((slot) => {
+          const description = taskTextByPeriod[slot.period] || "";
+          const resources = syncTaskResourcesWithText(description, [])
+            .filter((resource) => resource.resource_type === "LINK")
+            .map((resource) => ({ resource_type: "LINK" as const, label: resource.label, url: resource.url }));
+          return { period: slot.period, description, resources };
+        });
+      const payload = buildPublicLeaveSubmission({
+        teacherName,
+        scheduleDate,
+        requestType,
+        reason,
+        detail,
+        slots: selectedSlots,
+        tasks,
+      });
+      setSubmitting(true);
+      const result = await repository.submit(payload);
+      saveStoredTaskAccess({
+        requestCode: result.requestCode,
+        teacherName,
+        scheduleDate,
+        uploadToken: result.taskUploadToken,
+        expiresAt: result.taskUploadExpiresAt,
+      });
+
+      // The leave request must exist before a secure upload capability can be
+      // issued. Files are selected on the same form, then uploaded automatically
+      // immediately after SUBMITTED is created. A Drive failure never erases the
+      // already-valid leave request; the success screen offers manual retry.
+      const autoUploaded: Record<number, PublicLeaveTaskUploadResult[]> = {};
+      const uploadFailures: string[] = [];
+      for (const [periodKey, files] of Object.entries(pendingFilesByPeriod) as Array<[string, File[]]>) {
+        const period = Number(periodKey);
+        for (const file of files || []) {
+          try {
+            const uploaded = await uploadPublicLeaveTaskFile({
+              apiUrl: driveBridgeUrl,
+              requestCode: result.requestCode,
+              uploadToken: result.taskUploadToken,
+              period,
+              scheduleDate,
+              file,
+            });
+            autoUploaded[period] = [...(autoUploaded[period] || []), uploaded];
+          } catch (uploadErr) {
+            uploadFailures.push(`JP ${period} • ${file.name}: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
+          }
+        }
+      }
+      setUploadedByPeriod(autoUploaded);
+      setUploadError(uploadFailures.length > 0
+        ? `Pengajuan izin sudah tersimpan, tetapi ${uploadFailures.length} file gagal di-upload. Pilih ulang file pada panel di bawah untuk retry. ${uploadFailures.join(" | ")}`
+        : "");
+      setPendingFilesByPeriod({});
+      setSuccess({
+        requestId: result.requestId,
+        requestCode: result.requestCode,
+        slotCount: result.slotCount,
+        teachingSlotCount: result.teachingSlotCount,
+        freePeriodCount: result.freePeriodCount,
+        taskUploadToken: result.taskUploadToken,
+        taskUploadExpiresAt: result.taskUploadExpiresAt,
+        scheduleDate,
+        teachingPeriods: selectedSlots
+          .filter((slot) => slot.periodType === "TEACHING" && slot.period > 0)
+          .map((slot) => ({ period: slot.period, classCode: slot.classCode, subject: slot.subject })),
+      });
+      setReason("");
+      setDetail("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const resetForAnother = () => {
+    setSuccess(null);
+    setError("");
+    setUploadError("");
+    setUploadedByPeriod({});
+    setPendingFilesByPeriod({});
+    setTaskTextByPeriod({});
+    setRequestType("FULL_DAY");
+    setSelectedSlotKeys(new Set(availableSlots.map((slot) => slot.key)));
+  };
+
+  const handleTaskFileUpload = async (period: number, file: File) => {
+    if (!success) return;
+    setUploadError("");
+    setUploadingPeriod(period);
+    try {
+      const result = await uploadPublicLeaveTaskFile({
+        apiUrl: driveBridgeUrl,
+        requestCode: success.requestCode,
+        uploadToken: success.taskUploadToken,
+        period,
+        scheduleDate: success.scheduleDate,
+        file,
+      });
+      setUploadedByPeriod((current) => ({
+        ...current,
+        [period]: [...(current[period] || []), result],
+      }));
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploadingPeriod(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start gap-3">
+        <button
+          type="button"
+          onClick={onBack}
+          className="mt-1 p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors"
+          title="Kembali"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <div>
+          <div className="flex items-center gap-2 text-emerald-700 text-xs font-extrabold uppercase tracking-[0.14em]">
+            <ClipboardCheck className="w-4 h-4" /> V3.12.5 Teacher-Owned Leave & Task
+          </div>
+          <h2 className="text-2xl sm:text-3xl font-black text-slate-900 mt-1">Ajukan Izin Mengajar</h2>
+          <p className="text-sm text-slate-500 mt-1 max-w-2xl">
+            Tidak perlu login. Ketidakhadiran dimulai dari JP-0 Homeroom Session. JP mengajar menghasilkan badal; JP free tetap dicatat hanya untuk statistik kehadiran.
+          </p>
+        </div>
+      </div>
+
+      {!isSupabaseConfigured && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex gap-2 items-start">
+          <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+          <span>Mode form tersedia, tetapi pengiriman membutuhkan konfigurasi Supabase V3 di <code>.env.local</code>.</span>
+        </div>
+      )}
+
+      {success ? (
+        <div className="bg-white rounded-3xl border border-emerald-200 shadow-sm p-6 sm:p-8 text-center">
+          <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto">
+            <CheckCircle2 className="w-8 h-8" />
+          </div>
+          <h3 className="text-xl font-black text-slate-900 mt-4">Pengajuan berhasil dikirim</h3>
+          <p className="text-sm text-slate-500 mt-1">Status awal: <strong>SUBMITTED</strong> — belum otomatis menjadi izin yang disetujui.</p>
+          <div className="mt-5 inline-flex flex-col items-center rounded-2xl border border-slate-200 bg-slate-50 px-6 py-4">
+            <span className="text-[11px] uppercase tracking-widest font-bold text-slate-400">Kode Pengajuan</span>
+            <strong className="font-mono text-xl text-slate-900 mt-1 select-all">{success.requestCode}</strong>
+            <span className="text-xs text-slate-500 mt-2">{success.slotCount} JP ketidakhadiran tercatat</span>
+            <span className="text-[11px] text-slate-400 mt-1">{success.teachingSlotCount} kelas butuh coverage • {success.freePeriodCount} JP free</span>
+          </div>
+          {success.teachingPeriods.length > 0 && (
+            <div className="mt-6 text-left rounded-2xl border border-indigo-200 bg-indigo-50/50 p-4 sm:p-5">
+              <div className="flex items-center gap-2 font-black text-indigo-900"><UploadCloud className="w-5 h-5" /> Lampiran Tugas</div>
+              <p className="text-xs text-indigo-700 mt-1">File yang dipilih di form tadi otomatis dicoba upload setelah pengajuan dibuat. Di sini guru bisa menambah file atau retry bila ada upload yang gagal; token hanya berlaku sementara untuk pengajuan ini.</p>
+              <div className="mt-4 space-y-3">
+                {success.teachingPeriods.map((item) => (
+                  <div key={`upload-${item.period}`} className="rounded-xl border border-indigo-100 bg-white p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-black text-slate-900">JP {item.period} • {item.classCode}</div>
+                      <div className="text-[11px] text-slate-500">{item.subject || "Mata pelajaran"}</div>
+                      {(uploadedByPeriod[item.period] || []).map((resource) => (
+                        <a key={resource.resourceId || resource.url} href={resource.url} target="_blank" rel="noreferrer" className="mt-1 block text-[11px] text-emerald-700 font-bold truncate">📎 {resource.fileName}</a>
+                      ))}
+                    </div>
+                    <label className={`shrink-0 px-3 py-2 rounded-xl text-xs font-black flex items-center justify-center gap-2 cursor-pointer ${uploadingPeriod === item.period ? "bg-slate-200 text-slate-500" : "bg-indigo-600 hover:bg-indigo-700 text-white"}`}>
+                      <UploadCloud className="w-4 h-4" /> {uploadingPeriod === item.period ? "Mengupload..." : "Pilih File"}
+                      <input
+                        type="file"
+                        className="hidden"
+                        disabled={uploadingPeriod !== null}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void handleTaskFileUpload(item.period, file);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                    </label>
+                  </div>
+                ))}
+              </div>
+              {uploadError && <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 font-semibold">{uploadError}</div>}
+            </div>
+          )}
+          <p className="text-xs text-slate-400 mt-4">Simpan atau screenshot kode ini bila perlu dikonfirmasi ke Wakakur.</p>
+          <div className="mt-6 flex flex-wrap justify-center gap-2">
+            <button type="button" onClick={resetForAnother} className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm">
+              Buat Pengajuan Lain
+            </button>
+            <button type="button" onClick={onBack} className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm">
+              Kembali ke Dashboard
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)] gap-6 items-start">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5 sm:p-6 space-y-5">
+            <div>
+              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Nama Guru</label>
+              <div className="relative mt-2">
+                <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                <select
+                  value={teacherName}
+                  onChange={(event) => {
+                    setTeacherTouched(true);
+                    setTeacherName(event.target.value);
+                    setError("");
+                  }}
+                  className="w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 py-3 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
+                >
+                  <option value="">Pilih nama guru...</option>
+                  {sortedTeachers.map((teacher) => (
+                    <option key={teacher.id || teacher.nama} value={teacher.nama}>{teacher.nama}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1.5">
+                Mengganti nama di sini tidak mengubah guru terakhir yang sedang dilihat pada E-Jadwal.
+              </p>
+            </div>
+
+            <div>
+              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Tanggal Izin</label>
+              <div className="relative mt-2">
+                <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                <input
+                  type="date"
+                  value={scheduleDate}
+                  onChange={(event) => {
+                    setScheduleDate(event.target.value);
+                    setError("");
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 py-3 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
+                />
+              </div>
+              {scheduleDate && <p className="text-[11px] text-slate-400 mt-1.5">{formatDateIndo(scheduleDate)}</p>}
+            </div>
+
+            <div>
+              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Jenis Izin</label>
+              <div className="grid sm:grid-cols-2 gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => handleRequestType("FULL_DAY")}
+                  className={`rounded-xl border px-4 py-3 text-left transition-colors ${requestType === "FULL_DAY" ? "border-emerald-400 bg-emerald-50 text-emerald-900" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"}`}
+                >
+                  <div className="font-extrabold text-sm">Sehari penuh</div>
+                  <div className="text-[11px] opacity-70 mt-0.5">Semua JP sekolah aktif, termasuk JP free, otomatis dipilih.</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRequestType("PARTIAL")}
+                  className={`rounded-xl border px-4 py-3 text-left transition-colors ${requestType === "PARTIAL" ? "border-emerald-400 bg-emerald-50 text-emerald-900" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"}`}
+                >
+                  <div className="font-extrabold text-sm">Sebagian JP</div>
+                  <div className="text-[11px] opacity-70 mt-0.5">Centang hanya JP yang ditinggalkan.</div>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Alasan</label>
+              <input
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                placeholder="Contoh: sakit, keperluan keluarga, dinas..."
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Catatan <span className="font-normal normal-case">(opsional)</span></label>
+              <textarea
+                value={detail}
+                onChange={(event) => setDetail(event.target.value)}
+                rows={3}
+                placeholder="Keterangan tambahan tentang izin bila diperlukan."
+                className="mt-2 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
+              />
+            </div>
+
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-3">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-black text-indigo-900"><Paperclip className="w-4 h-4" /> Tugas untuk Guru Badal</div>
+                <p className="text-[11px] text-indigo-700 mt-1">Isi tugas untuk JP pelajaran (JP1–JP6). JP-0 Homeroom tetap membutuhkan badal tetapi tidak memerlukan materi tugas. Link yang ditempel otomatis disimpan sebagai resource.</p>
+              </div>
+              {selectedSlots.filter((slot) => slot.periodType === "TEACHING" && slot.period > 0).length === 0 ? (
+                <div className="text-xs text-slate-500 rounded-xl bg-white/70 border border-indigo-100 p-3">Pilih minimal satu JP mengajar untuk menyiapkan tugas.</div>
+              ) : selectedSlots.filter((slot) => slot.periodType === "TEACHING" && slot.period > 0).map((slot) => (
+                <div key={`task-${slot.period}`} className="rounded-xl bg-white border border-indigo-100 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-black text-slate-900">JP {slot.period} • {slot.classCode}</div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">{slot.subject || "Mata pelajaran"}</div>
+                    </div>
+                    {syncTaskResourcesWithText(taskTextByPeriod[slot.period] || "", []).length > 0 && (
+                      <span className="text-[9px] font-black rounded bg-blue-100 text-blue-700 px-2 py-1 flex items-center gap-1"><Link2 className="w-3 h-3" /> LINK</span>
+                    )}
+                  </div>
+                  <textarea
+                    value={taskTextByPeriod[slot.period] || ""}
+                    onChange={(event) => setTaskTextByPeriod((current) => ({ ...current, [slot.period]: event.target.value }))}
+                    rows={3}
+                    placeholder="Contoh: Kerjakan halaman 35–37 nomor 1–10, atau paste link Google Classroom/Drive di sini."
+                    className="mt-2 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
+                  />
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-black cursor-pointer">
+                      <UploadCloud className="w-3.5 h-3.5" /> Pilih File Tugas
+                      <input
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={(event) => {
+                          const files = Array.from(event.target.files || []);
+                          if (files.length) setPendingFilesByPeriod((current) => ({ ...current, [slot.period]: [...(current[slot.period] || []), ...files] }));
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                    </label>
+                    {(pendingFilesByPeriod[slot.period] || []).map((file, fileIndex) => (
+                      <span key={`${file.name}-${file.size}-${fileIndex}`} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[10px] font-bold text-emerald-800 max-w-full">
+                        <Paperclip className="w-3 h-3 shrink-0" />
+                        <span className="truncate max-w-[220px]">{file.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => setPendingFilesByPeriod((current) => ({ ...current, [slot.period]: (current[slot.period] || []).filter((_, index) => index !== fileIndex) }))}
+                          className="text-emerald-700 hover:text-red-600"
+                          title="Hapus file dari antrean upload"
+                        >×</button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden lg:sticky lg:top-4">
+            <div className="px-5 py-4 bg-slate-900 text-white">
+              <div className="flex items-center gap-2 font-black"><Clock3 className="w-5 h-5 text-emerald-300" /> JP Ketidakhadiran</div>
+              <div className="text-xs text-slate-300 mt-1">JP-0 Homeroom wajib digantikan bila wali/pendamping kelas tidak hadir. JP mengajar menghasilkan badal; JP free hanya dicatat untuk statistik.</div>
+            </div>
+
+            <div className="p-4 space-y-2 max-h-[460px] overflow-y-auto">
+              {!teacherName ? (
+                <div className="p-5 text-center text-sm text-slate-400">Pilih guru terlebih dahulu.</div>
+              ) : availableSlots.length === 0 ? (
+                <div className="p-5 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-slate-200">
+                  Tidak ada JP sekolah aktif yang dapat diajukan pada tanggal ini. Hari/libur penuh dan JP yang sudah tercatat izin tidak ditampilkan.
+                </div>
+              ) : (
+                availableSlots.map((slot) => {
+                  const checked = selectedSlotKeys.has(slot.key);
+                  return (
+                    <label
+                      key={slot.key}
+                      className={`block rounded-xl border p-3 transition-colors ${slot.period === 0 && slot.periodType === "TEACHING"
+                        ? (checked ? "border-violet-500 bg-violet-100/90 ring-1 ring-violet-200" : "border-violet-300 bg-violet-50/80")
+                        : slot.periodType === "FREE"
+                          ? (checked ? "border-sky-500 bg-sky-100/90 ring-1 ring-sky-200" : "border-sky-300 bg-sky-50/80")
+                          : (checked ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white")} ${requestType === "FULL_DAY" ? "cursor-default" : slot.period === 0 && slot.periodType === "TEACHING" ? "cursor-pointer hover:border-violet-400 hover:bg-violet-100/70" : slot.periodType === "FREE" ? "cursor-pointer hover:border-sky-400 hover:bg-sky-100/70" : "cursor-pointer hover:border-emerald-200"}`}
+                    >
+                      <div className="flex gap-3 items-start">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={requestType === "FULL_DAY"}
+                          onChange={() => toggleSlot(slot.key)}
+                          className="mt-1 w-4 h-4 accent-emerald-600"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-black text-sm text-slate-900">{slot.period === 0 ? "JP-0" : `JP ${slot.period}`} • {slot.classCode}</span>
+                            <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded ${slot.period === 0 && slot.periodType === "TEACHING" ? "bg-violet-200 text-violet-900" : slot.periodType === "FREE" ? "bg-sky-100 text-sky-700" : "bg-slate-100 text-slate-500"}`}>
+                              {slot.period === 0 && slot.periodType === "TEACHING" ? "HOMEROOM • WAJIB BADAL" : slot.periodType === "FREE" ? "JP FREE • Statistik" : sourceLabel(slot.source)}
+                            </span>
+                          </div>
+                          <div className={`text-sm font-semibold mt-1 ${slot.period === 0 && slot.periodType === "TEACHING" ? "text-violet-800" : slot.periodType === "FREE" ? "text-sky-700" : "text-slate-700"}`}>{slot.subject || "(Mapel belum terisi)"}</div>
+                          {slot.isCombinedSession && slot.periodType === "TEACHING" && (
+                            <div className="text-[10px] font-extrabold uppercase tracking-wide text-emerald-700 mt-1">Kelas gabungan • {slot.assignments.length} kelas</div>
+                          )}
+                          {(slot.startTime || slot.endTime) && <div className="text-[11px] text-slate-400 mt-0.5">{slot.startTime}{slot.startTime && slot.endTime ? " – " : ""}{slot.endTime}</div>}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="border-t border-slate-100 p-4 bg-slate-50">
+              <div className="flex justify-between text-xs font-semibold text-slate-500 mb-3">
+                <span>JP dipilih</span>
+                <span className="text-slate-900 font-black">{selectedSlots.length} / {availableSlots.length}</span>
+              </div>
+              {error && <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{error}</div>}
+              <button
+                type="submit"
+                disabled={submitting || !teacherName || !reason.trim() || selectedSlots.length === 0 || !isSupabaseConfigured}
+                className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-black px-4 py-3 flex items-center justify-center gap-2 transition-colors"
+              >
+                <Send className="w-4 h-4" /> {submitting ? "Mengirim Izin & Tugas..." : "Kirim Pengajuan Izin"}
+              </button>
+              <p className="text-[10px] text-slate-400 text-center mt-2">JP free tersimpan sebagai statistik ketidakhadiran dan tidak membuat kebutuhan badal. Semua pengajuan tetap SUBMITTED sampai disetujui Wakakur.</p>
+            </div>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+};
