@@ -75,6 +75,8 @@ export interface ScheduleIncidentalRow {
   period: number;
   kind?: string | null;
   override_subject?: string | null;
+  override_start_time?: string | null;
+  override_end_time?: string | null;
   override_room_id?: string | null;
   override_is_combined?: boolean | null;
   override_class_mode?: ScheduleClassMode | null;
@@ -326,6 +328,8 @@ export function mapIncidentalRows(args: {
       kelas: classById.get(row.class_id)?.display_name || "",
       jam_ke: Number(row.period),
       mapel: row.override_subject || "",
+      mulai: row.override_start_time?.slice(0, 5) || "",
+      selesai: row.override_end_time?.slice(0, 5) || "",
       guru1: teacherSlots[0],
       guru2: teacherSlots[1],
       guru3: teacherSlots[2],
@@ -338,6 +342,7 @@ export function mapIncidentalRows(args: {
       alasan: row.reason || "",
       tipe_insidental: row.incidental_type || row.kind || "",
       kind: row.kind || "OVERRIDE",
+      replaceTeachers: (overridesByIncidental.get(row.id) || []).length > 0,
     };
   });
 }

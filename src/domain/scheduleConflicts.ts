@@ -185,7 +185,9 @@ export function detectScheduleConflicts(
 
     const dateSessions = new Map<string, typeof effectiveRows>();
     effectiveRows.forEach((row) => {
-      const key = sessionSignature(row);
+      // A shared dated session must also share its venue. Same teacher/subject
+      // in different rooms is still a real conflict, not a combined class.
+      const key = `${sessionSignature(row)}|${normalizeImportKey(row.ruangan)}`;
       const current = dateSessions.get(key) || [];
       current.push(row);
       dateSessions.set(key, current);

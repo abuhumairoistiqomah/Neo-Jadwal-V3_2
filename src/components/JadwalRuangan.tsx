@@ -1,4 +1,8 @@
 import React, { useState, useMemo, useEffect } from "react";
+import { buildRoomWeekDays } from "../domain/roomWeek";
+import { classifyRoomOccupancy } from "../domain/roomOccupancy";
+import { WeeklyRoomEditor } from "./WeeklyRoomEditor";
+import { getCurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
 import { 
   ScheduleItem, 
   JadwalInsidentalItem, 
@@ -6,6 +10,7 @@ import {
   KalenderAkademikItem,
   normalizeDay,
   isCombinedClassValue,
+  isClassMatch,
   matchRoomId,
   getRoomDisplayName,
   resolveRoomInfo,
@@ -22,6 +27,7 @@ import {
   AlertTriangle, 
   ArrowLeft,
   RefreshCw,
+  Pencil,
   Info,
   CheckCircle2,
   X
@@ -35,23 +41,30 @@ interface JadwalRuanganProps {
   masterRuangan: MasterRuanganItem[];
   kalenderAkademik?: KalenderAkademikItem[];
   onBack: () => void;
+  onChanged?: () => Promise<void> | void;
 }
 
-function isClassMatch(classA?: string | null, classB?: string | null): boolean {
-  if (!classA || !classB) return false;
-  const a = classA.trim().toLowerCase();
-  const b = classB.trim().toLowerCase();
-  if (a === b) return true;
-  return a.includes(b) || b.includes(a);
-}
 
 export function JadwalRuangan({
   schedules,
   jadwalInsidental,
   masterRuangan,
   kalenderAkademik = [],
-  onBack
+  onBack,
+  onChanged = () => {},
 }: JadwalRuanganProps) {
+  const [canEditRooms, setCanEditRooms] = useState(false);
+  const [roomEditMode, setRoomEditMode] = useState(false);
+  const [editingRoomSlot, setEditingRoomSlot] = useState<{ date: string; period: number; initialClass?: string } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void getCurrentUserContext().then((ctx) => {
+      if (active) setCanEditRooms(Boolean(ctx?.roles.some((role) => role === "ADMIN" || role === "WAKASEK")));
+    }).catch(() => { if (active) setCanEditRooms(false); });
+    return () => { active = false; };
+  }, []);
+
   // --- FILTER ROOM SELECTION ---
   const [selectedRoomId, setSelectedRoomId] = useState<string>(() => {
     return localStorage.getItem("jadwal_ruangan_selected_room") || "";
@@ -63,6 +76,7 @@ export function JadwalRuangan({
   // --- CELL DETAIL MODAL STATE ---
   const [cellDetailModal, setCellDetailModal] = useState<{
     dayName: string;
+    dateStr: string;
     displayDate: string;
     jamLabel: string;
     jamKe: number;
@@ -144,39 +158,7 @@ export function JadwalRuangan({
   }, [masterRuangan, selectedRoomId]);
 
   // --- CALCULATE WEEK DAYS (Senin–Jumat) ---
-  const weekDays = useMemo(() => {
-    const now = new Date();
-    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-    let distanceToMon = (dayOfWeek + 6) % 7;
-
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - distanceToMon + (weekOffset * 7));
-
-    // If initial offset is 0 and today is Saturday or Sunday, default to next learning week
-    if (weekOffset === 0 && (dayOfWeek === 0 || dayOfWeek === 6)) {
-      if (dayOfWeek === 0) {
-        monday.setDate(monday.getDate() + 1);
-      } else {
-        monday.setDate(monday.getDate() + 2);
-      }
-    }
-
-    const dayNames = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"] as const;
-    const result = [];
-
-    for (let i = 0; i < 5; i++) {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-      const dateStr = `${yyyy}-${mm}-${dd}`;
-      const displayDate = d.toLocaleDateString("id-ID", { day: "numeric", month: "short" });
-      result.push({ name: dayNames[i], dateStr, displayDate });
-    }
-
-    return result;
-  }, [weekOffset]);
+  const weekDays = useMemo(() => buildRoomWeekDays(new Date(), weekOffset), [weekOffset]);
 
   const weekRangeText = useMemo(() => {
     if (weekDays.length < 5) return "";
@@ -263,8 +245,8 @@ export function JadwalRuangan({
               kelas: matchingIncidental.kelas || s.kelas,
               mapel: matchingIncidental.mapel || s.mapel,
               guru: teachers,
-              mulai: s.mulai,
-              selesai: s.selesai,
+              mulai: matchingIncidental.mulai || s.mulai,
+              selesai: matchingIncidental.selesai || s.selesai,
               source: "Insidental",
               tipe_insidental: matchingIncidental.tipe_insidental || "Perubahan Jadwal",
               alasan: matchingIncidental.alasan || matchingIncidental.keterangan_khusus || "",
@@ -320,8 +302,8 @@ export function JadwalRuangan({
             kelas: inc.kelas,
             mapel: inc.mapel,
             guru: teachers,
-            mulai: "",
-            selesai: "",
+            mulai: inc.mulai || "",
+            selesai: inc.selesai || "",
             source: "Insidental",
             tipe_insidental: inc.tipe_insidental || "Jadwal Tambahan",
             alasan: inc.alasan || inc.keterangan_khusus || "",
@@ -344,19 +326,7 @@ export function JadwalRuangan({
           // Sort classes in cell naturally
           items.sort((a, b) => a.kelas.localeCompare(b.kelas, undefined, { numeric: true, sensitivity: "base" }));
           
-          if (items.length > 1) {
-            // Room conflict vs valid combined class check
-            const firstMapel = (items[0].mapel || "").trim().toLowerCase();
-            const allCombined = items.every(u => isCombinedClassValue(u.kelasgabung));
-            const sameMapel = items.every(u => {
-              const m = (u.mapel || "").trim().toLowerCase();
-              return m === firstMapel || m.includes(firstMapel) || firstMapel.includes(m);
-            });
-
-            if (!allCombined || !sameMapel) {
-              conflicts += 1;
-            }
-          }
+          if (classifyRoomOccupancy(items).conflict) conflicts += 1;
         }
       }
     });
@@ -540,6 +510,11 @@ export function JadwalRuangan({
         </div>
       )}
 
+      {canEditRooms && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-900">
+        <div><strong>Edit ruangan hanya untuk minggu terpilih.</strong> Perubahan disimpan sebagai insidental per tanggal, tidak mengubah master. Slot kosong dapat dipakai untuk memindahkan kelas yang sudah terjadwal atau menambah sesi baru.</div>
+        <button onClick={() => setRoomEditMode((value) => !value)} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 font-black ${roomEditMode ? "bg-indigo-700 text-white" : "border border-indigo-300 bg-white text-indigo-700"}`}><Pencil className="h-4 w-4" />{roomEditMode ? "✓ Mode edit aktif" : "Edit Ruangan Minggu Ini"}</button>
+      </div>}
+
       {/* ROOM CONFLICT WARNING BANNER */}
       {totalConflicts > 0 && (
         <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-start gap-3 text-red-900 text-xs sm:text-sm animate-pulse">
@@ -604,24 +579,16 @@ export function JadwalRuangan({
                       let isConflict = false;
                       let isCombined = false;
 
-                      if (usages.length > 1) {
-                        const firstMapel = (usages[0].mapel || "").trim().toLowerCase();
-                        const allCombined = usages.every(u => isCombinedClassValue(u.kelasgabung));
-                        const sameMapel = usages.every(u => {
-                          const m = (u.mapel || "").trim().toLowerCase();
-                          return m === firstMapel || m.includes(firstMapel) || firstMapel.includes(m);
-                        });
-
-                        if (allCombined && sameMapel) {
-                          isCombined = true;
-                        } else {
-                          isConflict = true;
-                        }
-                      }
+                      ({ conflict: isConflict, combined: isCombined } = classifyRoomOccupancy(usages));
 
                       const handleOpenCellDetail = () => {
+                        if (roomEditMode && canEditRooms) {
+                          setEditingRoomSlot({ date: dayInfo.dateStr, period: jam, initialClass: usages[0]?.kelas });
+                          return;
+                        }
                         setCellDetailModal({
                           dayName: dayInfo.name,
+                          dateStr: dayInfo.dateStr,
                           displayDate: dayInfo.displayDate,
                           jamLabel: timeDefault.label,
                           jamKe: jam,
@@ -683,6 +650,7 @@ export function JadwalRuangan({
                                     {u.mapel}
                                   </div>
 
+                                  {u.source === "Insidental" && u.mulai && u.selesai && <span className="text-[10px] font-bold text-indigo-700">{u.mulai}–{u.selesai}</span>}
                                   {/* Teacher */}
                                   <div className="flex items-center justify-between text-[10px] text-slate-600 font-medium truncate">
                                     <span className="truncate" title={u.guru}>{u.guru || "-"}</span>
@@ -752,24 +720,16 @@ export function JadwalRuangan({
                   let isConflict = false;
                   let isCombined = false;
 
-                  if (usages.length > 1) {
-                    const firstMapel = (usages[0].mapel || "").trim().toLowerCase();
-                    const allCombined = usages.every(u => isCombinedClassValue(u.kelasgabung));
-                    const sameMapel = usages.every(u => {
-                      const m = (u.mapel || "").trim().toLowerCase();
-                      return m === firstMapel || m.includes(firstMapel) || firstMapel.includes(m);
-                    });
-
-                    if (allCombined && sameMapel) {
-                      isCombined = true;
-                    } else {
-                      isConflict = true;
-                    }
-                  }
+                  ({ conflict: isConflict, combined: isCombined } = classifyRoomOccupancy(usages));
 
                   const handleOpenCellDetail = () => {
+                    if (roomEditMode && canEditRooms) {
+                      setEditingRoomSlot({ date: dayInfo.dateStr, period: jam, initialClass: usages[0]?.kelas });
+                      return;
+                    }
                     setCellDetailModal({
                       dayName: dayInfo.name,
+                      dateStr: dayInfo.dateStr,
                       displayDate: dayInfo.displayDate,
                       jamLabel: timeDefault.label,
                       jamKe: jam,
@@ -829,6 +789,7 @@ export function JadwalRuangan({
                                   </div>
                                 </div>
                                 <div className="font-bold text-xs mt-0.5 text-slate-800">{u.mapel}</div>
+                                {u.source === "Insidental" && u.mulai && u.selesai && <div className="text-[11px] font-semibold text-indigo-700">Pukul {u.mulai}–{u.selesai}</div>}
                                 {u.guru && <div className="text-[11px] text-slate-600 font-medium">{u.guru}</div>}
                               </div>
                             );
@@ -843,6 +804,19 @@ export function JadwalRuangan({
           );
         })}
       </div>
+
+      {editingRoomSlot && <WeeklyRoomEditor
+        date={editingRoomSlot.date}
+        period={editingRoomSlot.period}
+        initialRoomId={selectedRoomId}
+        initialClass={editingRoomSlot.initialClass}
+        schedules={schedules}
+        incidentals={jadwalInsidental}
+        calendar={kalenderAkademik}
+        rooms={masterRuangan}
+        onChanged={onChanged}
+        onClose={() => setEditingRoomSlot(null)}
+      />}
 
       {/* CELL DETAIL POP-UP MODAL */}
       {cellDetailModal && (
@@ -982,6 +956,7 @@ export function JadwalRuangan({
                           <div>
                             <span className="text-[10px] font-bold text-slate-500 uppercase block">Mata Pelajaran</span>
                             <span className="font-extrabold text-slate-800 text-xs sm:text-sm">{u.mapel || "-"}</span>
+                            {u.mulai && u.selesai && <span className="block text-xs text-indigo-700 font-bold">Pukul {u.mulai}–{u.selesai}</span>}
                           </div>
                           <div>
                             <span className="text-[10px] font-bold text-slate-500 uppercase block">Guru Pengajar</span>
@@ -1004,7 +979,11 @@ export function JadwalRuangan({
             </div>
 
             {/* Modal Footer */}
-            <div className="bg-slate-50 px-5 py-3 border-t border-slate-200 flex justify-end">
+            <div className="bg-slate-50 px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
+              {canEditRooms && <button onClick={() => {
+                setEditingRoomSlot({ date: cellDetailModal.dateStr, period: cellDetailModal.jamKe, initialClass: cellDetailModal.usages[0]?.kelas });
+                setCellDetailModal(null);
+              }} className="inline-flex items-center gap-1 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black text-white"><Pencil className="h-4 w-4" /> Edit Ruangan</button>}
               <button
                 onClick={() => setCellDetailModal(null)}
                 className="px-5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all shadow-2xs active:scale-95"

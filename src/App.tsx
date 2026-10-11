@@ -1354,6 +1354,7 @@ export default function App() {
                 jadwalInsidental={jadwalInsidental}
                 masterRuangan={masterRuangan}
                 kalenderAkademik={kalenderAkademik}
+                onChanged={async () => { await refreshFromSupabase(); }}
                 onBack={() => setActivePage("dashboard")}
               />
             )}

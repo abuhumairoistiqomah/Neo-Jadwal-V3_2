@@ -20,6 +20,7 @@ import {
 } from "../domain/syaikhRotationImport";
 import { ScheduleAdminRepository, type ScheduleAdminContext } from "../infrastructure/repositories/scheduleAdminRepository";
 import { getCurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
+import { explainSyaikhPublishError, isSyaikhTeacherConflictRequired } from "../domain/syaikhRotationPublishErrors";
 
 interface Props {
   schedules: ScheduleItem[];
@@ -149,29 +150,58 @@ export const SyaikhScheduleMassImporter: React.FC<Props> = ({ schedules, inciden
     setError(null);
     setMessage(null);
     try {
-      const result = await repo.publishSyaikhRotation({
-        rows: resolution.rows.map((row) => ({
-          scheduleDate: row.scheduleDate,
-          classId: row.classId,
-          period: row.period,
-          subject: row.subject,
-          isCombined: row.isCombined,
-          teacherIds: row.teacherIds,
-          teacherNames: row.teacherNames,
-          specialNote: row.specialNote,
-          reason: row.reason,
-          rotationStatus: row.rotationStatus,
-          sourceCell: row.sourceCell,
-          groupKey: row.groupKey,
-        })),
+      const rows = resolution.rows.map((row) => ({
+        scheduleDate: row.scheduleDate,
+        classId: row.classId,
+        period: row.period,
+        subject: row.subject,
+        isCombined: row.isCombined,
+        teacherIds: row.teacherIds,
+        teacherNames: row.teacherNames,
+        specialNote: row.specialNote,
+        reason: row.reason,
+        rotationStatus: row.rotationStatus,
+        sourceCell: row.sourceCell,
+        groupKey: row.groupKey,
+      }));
+      // Preview knows the planned rotation, but only Supabase knows all existing
+      // master/incidental assignments. Never silently bypass its conflict checks.
+      const submit = (allowTeacherConflict: boolean) => repo.publishSyaikhRotation({
+        rows,
         sourceFile: parsedSource.sourceFile,
         sourceSheet: parsedSource.sourceSheet,
-        allowTeacherConflict: resolution.summary.warningCount > 0,
+        allowTeacherConflict,
       });
+      const initiallyConfirmed = resolution.summary.warningCount > 0;
+      let result;
+      try {
+        result = await submit(initiallyConfirmed);
+      } catch (initialError) {
+        // The DB can find conflicts missed by the client preview, especially
+        // when publishing two intentionally joined classes sequentially.
+        if (!initiallyConfirmed && isSyaikhTeacherConflictRequired(initialError)) {
+          const accepted = window.confirm(
+            "Supabase mendeteksi guru yang terjadwal pada slot sama. Hal ini bisa terjadi pada kelas gabungan, tetapi bisa juga bentrok nyata.\n\n" +
+            "Lanjutkan publish 1 batch dengan konfirmasi konflik guru? Periksa Jadwal Ruangan / Conflict Center setelahnya.\n\n" +
+            "Batal = tidak ada perubahan tersimpan."
+          );
+          if (!accepted) {
+            setError("Publish dibatalkan karena konflik guru belum dikonfirmasi. Tidak ada perubahan batch yang tersimpan.");
+            return;
+          }
+          result = await submit(true);
+        } else {
+          throw initialError;
+        }
+      }
       setMessage(`Publish selesai: ${result.published ?? resolution.rows.length} incidental dibuat/diperbarui (${result.native_rows ?? resolution.summary.nativeRows} Native, ${result.normal_rows ?? resolution.summary.normalRows} Normal).`);
-      await onPublished();
+      try {
+        await onPublished();
+      } catch (refreshError) {
+        setError(`Publish berhasil, tetapi refresh tampilan gagal: ${explainSyaikhPublishError(refreshError, resolution.rows)}. Gunakan tombol Refresh Supabase.`);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Publish rotasi gagal.");
+      setError(explainSyaikhPublishError(err, resolution.rows));
     } finally {
       setBusy(false);
     }
@@ -242,9 +272,11 @@ export const SyaikhScheduleMassImporter: React.FC<Props> = ({ schedules, inciden
           </section>
 
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-5">
-            <div className="text-xs text-slate-600">Publish bersifat <strong>idempotent</strong> untuk slot bertipe <code>SYAIKH_ROTATION</code>. Perubahan insidental lain pada slot yang sama akan diblokir, bukan ditimpa.</div>
+            <div className="text-xs text-slate-600">Publish bersifat <strong>idempotent</strong> untuk slot bertipe <code>SYAIKH_ROTATION</code>. Perubahan insidental lain pada slot yang sama akan diblokir, bukan ditimpa. <strong>0 warning pada preview tidak menjamin bebas bentrok di Supabase.</strong></div>
             <div className="flex gap-2"><button onClick={() => { setParsedSource(null); setWorkbookSheets([]); setMessage(null); setError(null); }} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-600"><RefreshCw className="w-4 h-4" /> Reset</button><button onClick={() => void publish()} disabled={busy || resolution.summary.errorCount > 0 || !resolution.rows.length} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2.5 text-xs font-black text-white disabled:opacity-40"><Save className="w-4 h-4" /> {busy ? "Publishing..." : `Publish ${resolution.rows.length} Perubahan`}</button></div>
           </div>
+          {error && <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800 whitespace-pre-wrap">Gagal publish: {error}</div>}
+          {message && <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{message}</div>}
         </>
       )}
     </div>

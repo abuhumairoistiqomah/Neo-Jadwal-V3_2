@@ -1,8 +1,8 @@
 export function getErrorMessage(error: unknown, fallback = "Terjadi kesalahan yang tidak dikenal."): string {
   if (error == null) return fallback;
   if (typeof error === "string") return error.trim() || fallback;
-  if (error instanceof Error) return error.message.trim() || fallback;
-
+  // Supabase's PostgrestError can extend Error. Preserve its .details, .hint
+  // and .code instead of returning only .message via instanceof Error.
   if (typeof error === "object") {
     const value = error as Record<string, unknown>;
     const parts = [
@@ -25,6 +25,7 @@ export function getErrorMessage(error: unknown, fallback = "Terjadi kesalahan ya
     }
   }
 
+  if (error instanceof Error) return error.message.trim() || fallback;
   return fallback;
 }
 

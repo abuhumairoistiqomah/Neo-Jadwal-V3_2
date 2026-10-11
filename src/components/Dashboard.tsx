@@ -8,6 +8,7 @@ import {
 } from "../types";
 import { JAM_TIME_MAP } from "../constants/schedule";
 import { teachingSessionSignature } from "../domain/schedule/teachingSession";
+import { buildDashboardEffectiveDay, getDashboardClassSlotItems } from "../domain/schedule/dashboardEffectiveDay";
 import { 
   Search, Calendar, CalendarDays, BookOpen, Clock, Users, UserPlus, GraduationCap,
   History, BarChart2, Shield, User, ChevronRight, X, Table, ChevronDown, Bell, Eye, EyeOff, AlertTriangle, ClipboardCheck, Pencil 
@@ -189,53 +190,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
   };
   const isNativeTeacher = useMemo(() => checkIsNative(currentTeacherObj), [currentTeacherObj]);
 
-  // 1. Get incidentals for selected date
-  const todaysIncidentals = useMemo(() => {
-    if (!jadwalInsidental) return [];
-    return jadwalInsidental.filter(inc => inc.tanggal === selectedDate);
-  }, [jadwalInsidental, selectedDate]);
-
-  // 2. Process master schedules for selected day with Jadwal_Insidental override
-  const processedMasterSchedulesForDay = useMemo(() => {
-    const daySchedules = schedules.filter(s => isSameDay(s.hari, selectedDay));
-
-    return daySchedules.map(s => {
-      // Find matching incidental item by kelas and jam_ke for selectedDate
-      const incMatch = todaysIncidentals.find(inc => 
-        inc.kelas && inc.kelas.trim().toLowerCase() === s.kelas.trim().toLowerCase() &&
-        Number(inc.jam_ke) === Number(s.jam_ke)
-      );
-
-      if (incMatch) {
-        // OVERRIDE: Timpa mapel, guru1 s/d guru6, dan ruangan jika ada
-        const hasIncidentalRoom = hasMeaningfulValue(incMatch.ruangan);
-        return {
-          ...s,
-          mapel: incMatch.mapel || s.mapel,
-          guru1: incMatch.guru1 !== undefined && incMatch.guru1 !== "" ? incMatch.guru1 : s.guru1,
-          guru2: incMatch.guru2 !== undefined ? incMatch.guru2 : s.guru2,
-          guru3: incMatch.guru3 !== undefined ? incMatch.guru3 : s.guru3,
-          guru4: incMatch.guru4 !== undefined ? incMatch.guru4 : s.guru4,
-          guru5: incMatch.guru5 !== undefined ? incMatch.guru5 : s.guru5,
-          guru6: incMatch.guru6 !== undefined ? incMatch.guru6 : s.guru6,
-          ruangan: hasIncidentalRoom ? String(incMatch.ruangan).trim() : s.ruangan,
-          keterangan_khusus: incMatch.keterangan_khusus || s.keterangan_khusus,
-          isOverridden: true,
-          keterangan_insidental: incMatch.keterangan_khusus || "",
-          alasan_insidental: incMatch.alasan || "",
-          tipe_insidental: incMatch.tipe_insidental || ""
-        };
-      }
-
-      return {
-        ...s,
-        isOverridden: false,
-        keterangan_insidental: "",
-        alasan_insidental: "",
-        tipe_insidental: ""
-      };
-    });
-  }, [schedules, selectedDay, todaysIncidentals]);
+  // Canonical dated schedule. The incidental owns class + date + JP; do not
+  // union its teachers/subject with the master from an unrelated lesson.
+  const processedMasterSchedulesForDay = useMemo(() => buildDashboardEffectiveDay({
+    date: selectedDate,
+    schedules,
+    jadwalInsidental,
+    logs,
+    kalenderAkademik,
+  }), [selectedDate, schedules, jadwalInsidental, logs, kalenderAkademik]);
 
   // Formatted date string in Indonesian
   const formattedDateIndo = useMemo(() => {
@@ -260,14 +223,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
     const periods = [1, 2, 3, 4, 5, 6];
 
-    // 1. Processed master schedules for selectedClass (already overridden by Jadwal_Insidental)
+    // All displayed rows already come from the dated effective engine.
+    // In particular, a combined AE + MQ incidental replaces each class's
+    // original Fisika/Ekonomi slot, rather than appearing beside it.
     const classSchedulesForDay = processedMasterSchedulesForDay.filter(s =>
       s.kelas && isClassMatch(s.kelas, selectedClass)
-    );
-
-    // 2. Incidentals specifically matching selectedClass on selectedDate
-    const classIncidentalsForDate = todaysIncidentals.filter(inc =>
-      inc.kelas && isClassMatch(inc.kelas, selectedClass)
     );
 
     // 3. Log_Izin items matching selectedClass on selectedDate
@@ -276,14 +236,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
     );
 
     return periods.map(jamKe => {
-      const periodMasterItems = classSchedulesForDay.filter(s => Number(s.jam_ke) === Number(jamKe));
-      const periodIncidentalItems = classIncidentalsForDate.filter(inc => Number(inc.jam_ke) === Number(jamKe));
-      const periodLogs = classLogsForDate.filter(log => Number(log.jam_ke) === Number(jamKe));
+      const periodMasterItems = getDashboardClassSlotItems(classSchedulesForDay, selectedClass, jamKe);
+      // Do not show leave records for teachers replaced by an explicit new team.
+      const explicitTeacherReplacement = periodMasterItems.some(item => item.teacherTeamReplaced);
+      const slotTeachers = new Set(periodMasterItems.flatMap(item => item.scheduledTeachers.map(name => name.trim().toLowerCase())));
+      const periodLogs = classLogsForDate.filter(log =>
+        Number(log.jam_ke) === Number(jamKe) &&
+        (!explicitTeacherReplacement || slotTeachers.has(String(log.guru_izin || "").trim().toLowerCase()))
+      );
 
       const academicEvent = getAcademicCalendarEvent(selectedDate, selectedClass, Number(jamKe), kalenderAkademik);
 
       const hasMaster = periodMasterItems.length > 0;
-      const hasIncidental = periodIncidentalItems.length > 0;
+      const hasIncidental = periodMasterItems.some(item => item.isOverridden);
       const hasLogs = periodLogs.length > 0;
 
       if (!hasMaster && !hasIncidental && !hasLogs && !academicEvent) {
@@ -319,50 +284,25 @@ export const Dashboard: React.FC<DashboardProps> = ({
         mapel = academicEvent.nama_kegiatan;
       } else {
         mapel = [...new Set(periodMasterItems.map(i => i.mapel))].filter(Boolean).join(", ");
-        if (!mapel && hasIncidental) {
-          mapel = [...new Set(periodIncidentalItems.map(i => i.mapel))].filter(Boolean).join(", ");
-        }
         if (!mapel && hasLogs) {
           mapel = [...new Set(periodLogs.map(l => l.mapel))].filter(Boolean).join(", ");
         }
       }
 
       // Ruangan & Keterangan Khusus
-      let ruangan = [...new Set([
-        ...periodMasterItems.map(i => i.ruangan || ""),
-        ...periodIncidentalItems.map(i => i.ruangan || "")
-      ])].filter(Boolean).join(", ");
+      let ruangan = [...new Set(periodMasterItems.map(i => i.ruangan || ""))].filter(Boolean).join(", ");
 
-      let keterangan_khusus = [...new Set([
-        ...periodMasterItems.map(i => i.keterangan_khusus || ""),
-        ...periodIncidentalItems.map(i => i.keterangan_khusus || "")
-      ])].filter(Boolean).join(", ");
+      let keterangan_khusus = [...new Set(periodMasterItems.map(i => i.keterangan_khusus || ""))].filter(Boolean).join(", ");
 
-      const isIncidental = periodMasterItems.some(i => i.isOverridden) || hasIncidental;
-      const keterangan_insidental = [...new Set([
-        ...periodMasterItems.map(i => i.keterangan_insidental || ""),
-        ...periodIncidentalItems.map(i => i.keterangan_khusus || "")
-      ])].filter(Boolean).join(", ");
-      const alasan_insidental = [...new Set([
-        ...periodMasterItems.map(i => i.alasan_insidental || ""),
-        ...periodIncidentalItems.map(i => i.alasan || "")
-      ])].filter(Boolean).join(", ");
-      const tipe_insidental = [...new Set([
-        ...periodMasterItems.map(i => i.tipe_insidental || ""),
-        ...periodIncidentalItems.map(i => i.tipe_insidental || "")
-      ])].filter(Boolean).join(", ");
+      const isIncidental = hasIncidental;
+      const keterangan_insidental = [...new Set(periodMasterItems.map(i => i.keterangan_insidental || ""))].filter(Boolean).join(", ");
+      const alasan_insidental = [...new Set(periodMasterItems.map(i => i.alasan_insidental || ""))].filter(Boolean).join(", ");
+      const tipe_insidental = [...new Set(periodMasterItems.map(i => i.tipe_insidental || ""))].filter(Boolean).join(", ");
 
       // Collect original teachers list
       const rawOriginalTeachers: string[] = [];
       periodMasterItems.forEach(i => {
         [i.guru1, i.guru2, i.guru3, i.guru4, i.guru5, i.guru6].forEach(g => {
-          if (g && g.trim() && !rawOriginalTeachers.some(t => t.toLowerCase() === g.trim().toLowerCase())) {
-            rawOriginalTeachers.push(g.trim());
-          }
-        });
-      });
-      periodIncidentalItems.forEach(inc => {
-        [inc.guru1, inc.guru2, inc.guru3, inc.guru4, inc.guru5, inc.guru6].forEach(g => {
           if (g && g.trim() && !rawOriginalTeachers.some(t => t.toLowerCase() === g.trim().toLowerCase())) {
             rawOriginalTeachers.push(g.trim());
           }
@@ -466,7 +406,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         items: periodMasterItems
       };
     });
-  }, [selectedClass, processedMasterSchedulesForDay, todaysIncidentals, logs, selectedDate, kalenderAkademik]);
+  }, [selectedClass, processedMasterSchedulesForDay, logs, selectedDate, kalenderAkademik]);
 
   // 3. Filter regular schedules for selected teacher
   const teacherRegularSchedules = useMemo(() => {
@@ -550,11 +490,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
   // Filter active logs (Tugas Inval) for the selected teacher on this date
   const activeInvalLogs = useMemo(() => {
     if (!selectedTeacher || !logs) return [];
-    return logs.filter(log => 
-      log.tanggal === selectedDate && 
-      log.guru_pengganti && log.guru_pengganti.trim().toLowerCase() === selectedTeacher.trim().toLowerCase()
-    );
-  }, [logs, selectedDate, selectedTeacher]);
+    return logs.filter(log => {
+      if (log.tanggal !== selectedDate || !log.guru_pengganti ||
+          log.guru_pengganti.trim().toLowerCase() !== selectedTeacher.trim().toLowerCase()) return false;
+      const matchedSlots = processedMasterSchedulesForDay.filter(s =>
+        Number(s.jam_ke) === Number(log.jam_ke) && isClassMatch(s.kelas, log.kelas)
+      );
+      // A dated teacher-team replacement cancels earlier leave/badal assignments
+      // for the displaced master teacher. Keep the log in history, not in today’s lesson.
+      return !matchedSlots.some(s => s.teacherTeamReplaced) ||
+        matchedSlots.some(s => s.scheduledTeachers.some(name =>
+          name.trim().toLowerCase() === String(log.guru_izin || "").trim().toLowerCase()
+        ));
+    });
+  }, [logs, selectedDate, selectedTeacher, processedMasterSchedulesForDay]);
 
   const invalSchedules = useMemo(() => {
     // Coverage is persisted per canonical class, but the dashboard must render
@@ -1200,7 +1149,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                 {(() => {
                                   const isMonToThu = ["Senin", "Selasa", "Rabu", "Kamis"].includes(selectedDay);
                                   const hasG12 = item.items.some(i => isGrade1Or2(i.kelas));
-                                  if (isMonToThu && item.jam_ke === 6) {
+                                  if (isMonToThu && item.jam_ke === 6 && !item.items.some(i => "source" in i && i.source !== "MASTER")) {
                                     return hasG12 ? "14:00 - 14:20" : "14:00 - 15:00";
                                   }
                                   return item.mulai && item.selesai ? `${item.mulai} - ${item.selesai}` : JAM_TIME_MAP[item.jam_ke];
@@ -1496,11 +1445,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   );
                   const dbTime = matchingScheduleForTime ? `${matchingScheduleForTime.mulai} - ${matchingScheduleForTime.selesai}` : null;
 
-                  const timeLabel = (isMonToThu && period.jam_ke === 6)
+                  const datedSlot = period.items.find(item => item.mulai && item.selesai && "source" in item && item.source !== "MASTER");
+                  const datedTime = datedSlot ? `${datedSlot.mulai} - ${datedSlot.selesai}` : null;
+                  const timeLabel = datedTime || ((isMonToThu && period.jam_ke === 6)
                     ? (hasG12 ? "14:00 - 14:20" : "14:00 - 15:00")
                     : dbTime 
                       ? dbTime
-                      : JAM_TIME_MAP[period.jam_ke];
+                      : JAM_TIME_MAP[period.jam_ke]);
 
                   if (period.isEmpty) {
                     return (

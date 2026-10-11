@@ -279,14 +279,6 @@ export class OperationalRulesRepository {
     const classIds = Array.from(new Set((input.classIds || []).filter(Boolean)));
     if (input.scope === "CLASS" && classIds.length === 0) throw new Error("Pilih minimal satu kelas.");
 
-    if (input.existingRowIds?.length) {
-      const { error } = await client
-        .from("academic_events")
-        .update({ status: "INACTIVE" })
-        .in("id", input.existingRowIds);
-      if (error) throw error;
-    }
-
     const groupCode = input.existingRowIds?.length ? buildCalendarGroupCode() : (clean(input.groupCode) || buildCalendarGroupCode());
     const targets = input.scope === "ALL" ? [null] : classIds;
     const payload = targets.map((classId) => ({
@@ -303,8 +295,22 @@ export class OperationalRulesRepository {
       status: "ACTIVE",
     }));
 
-    const { error } = await client.from("academic_events").insert(payload);
+    // Insert new revision *before* inactivating prior revision. A failed insert
+    // must never cause the previously active calendar event to disappear.
+    const { data: inserted, error } = await client.from("academic_events").insert(payload).select("id");
     if (error) throw error;
+    if (input.existingRowIds?.length) {
+      const { error: updateError } = await client
+        .from("academic_events")
+        .update({ status: "INACTIVE" })
+        .in("id", input.existingRowIds);
+      if (updateError) {
+        // Best-effort compensation for non-transactional browser writes.
+        const newIds = (inserted || []).map((item: { id: string }) => item.id);
+        if (newIds.length) await client.from("academic_events").update({ status: "INACTIVE" }).in("id", newIds);
+        throw updateError;
+      }
+    }
   }
 
   async setAcademicEventGroupActive(rowIds: string[], active: boolean): Promise<void> {

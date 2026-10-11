@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, CalendarDays, Check, Edit3, Loader2, RefreshCw, RotateCcw, Save, Search, ShieldAlert, ToggleLeft, ToggleRight } from "lucide-react";
+import { atomicClassChoices, expandCalendarClassIds } from "../domain/academicCalendarClasses";
+import { getErrorMessage } from "../domain/errorMessage";
 import { getCurrentUserContext, type CurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
 import {
   OperationalRulesRepository,
@@ -35,17 +37,20 @@ export const AcademicCalendarAdmin: React.FC<Props> = ({ onBack, onChanged }) =>
   const [dateEnd, setDateEnd] = useState("");
   const [scope, setScope] = useState<"ALL" | "CLASS">("CLASS");
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
+  const [unresolvedLegacyIds, setUnresolvedLegacyIds] = useState<string[]>([]);
   const [wholeDay, setWholeDay] = useState(true);
   const [periodStart, setPeriodStart] = useState(0);
   const [periodEnd, setPeriodEnd] = useState(6);
   const [classSearch, setClassSearch] = useState("");
 
   const canManage = Boolean(context?.roles.some((role) => role === "ADMIN" || role === "WAKASEK"));
+  const atomicClasses = useMemo(() => atomicClassChoices(classes), [classes]);
+  const combinedCount = classes.length - atomicClasses.length;
   const filteredClasses = useMemo(() => {
     const query = classSearch.trim().toLocaleLowerCase("id-ID");
-    if (!query) return classes;
-    return classes.filter((row) => `${row.display_name} ${row.code}`.toLocaleLowerCase("id-ID").includes(query));
-  }, [classes, classSearch]);
+    if (!query) return atomicClasses;
+    return atomicClasses.filter((row) => `${row.display_name} ${row.code}`.toLocaleLowerCase("id-ID").includes(query));
+  }, [atomicClasses, classSearch]);
 
   const resetForm = () => {
     setEditing(null);
@@ -55,6 +60,7 @@ export const AcademicCalendarAdmin: React.FC<Props> = ({ onBack, onChanged }) =>
     setDateEnd("");
     setScope("CLASS");
     setSelectedClassIds([]);
+    setUnresolvedLegacyIds([]);
     setWholeDay(true);
     setPeriodStart(0);
     setPeriodEnd(6);
@@ -74,7 +80,7 @@ export const AcademicCalendarAdmin: React.FC<Props> = ({ onBack, onChanged }) =>
       setClasses(classRows);
       setGroups(eventGroups);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(getErrorMessage(err, "Gagal memproses Kalender Akademik."));
     } finally {
       setLoading(false);
     }
@@ -93,7 +99,9 @@ export const AcademicCalendarAdmin: React.FC<Props> = ({ onBack, onChanged }) =>
     setDateStart(group.dateStart);
     setDateEnd(group.dateEnd);
     setScope(group.scope);
-    setSelectedClassIds(group.classIds);
+    const selection = expandCalendarClassIds(group.classIds, classes);
+    setSelectedClassIds(selection.classIds);
+    setUnresolvedLegacyIds(selection.unresolvedLegacyIds);
     setWholeDay(group.periodStart == null && group.periodEnd == null);
     setPeriodStart(group.periodStart ?? 0);
     setPeriodEnd(group.periodEnd ?? 6);
@@ -115,7 +123,7 @@ export const AcademicCalendarAdmin: React.FC<Props> = ({ onBack, onChanged }) =>
         eventName,
         eventType,
         scope,
-        classIds: scope === "CLASS" ? selectedClassIds : [],
+        classIds: scope === "CLASS" ? [...selectedClassIds, ...unresolvedLegacyIds] : [],
         periodStart: wholeDay ? null : periodStart,
         periodEnd: wholeDay ? null : periodEnd,
       });
@@ -124,7 +132,7 @@ export const AcademicCalendarAdmin: React.FC<Props> = ({ onBack, onChanged }) =>
       setGroups(await repository.listAcademicEventGroups());
       await onChanged?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(getErrorMessage(err, "Gagal memproses Kalender Akademik."));
     } finally {
       setSaving(false);
     }
@@ -137,7 +145,7 @@ export const AcademicCalendarAdmin: React.FC<Props> = ({ onBack, onChanged }) =>
       setGroups(await repository.listAcademicEventGroups());
       await onChanged?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(getErrorMessage(err, "Gagal memproses Kalender Akademik."));
     }
   };
 
@@ -157,7 +165,7 @@ export const AcademicCalendarAdmin: React.FC<Props> = ({ onBack, onChanged }) =>
       {error && <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-red-800 text-sm font-semibold">{error}</div>}
 
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-        <div className="flex items-center justify-between gap-3"><div><h2 className="font-black text-lg">{editing ? "Edit Kegiatan" : "Tambah Kegiatan / Libur"}</h2><p className="text-xs text-slate-500">Pilih beberapa kelas sekaligus untuk satu kegiatan. Sistem menyimpan satu event per kelas tetapi mengelolanya sebagai satu grup.</p></div>{editing && <button onClick={resetForm} className="text-xs font-bold text-slate-500 hover:text-slate-800 inline-flex items-center gap-1"><RotateCcw className="w-4 h-4" /> Batal Edit</button>}</div>
+        <div className="flex items-center justify-between gap-3"><div><h2 className="font-black text-lg">{editing ? "Edit Kegiatan" : "Tambah Kegiatan / Libur"}</h2><p className="text-xs text-slate-500">Pilih kelas dasar; kegiatan akan berlaku juga pada sesi gabungan yang memuat kelas tersebut. Satu kegiatan tetap dikelola sebagai satu grup.</p></div>{editing && <button onClick={resetForm} className="text-xs font-bold text-slate-500 hover:text-slate-800 inline-flex items-center gap-1"><RotateCcw className="w-4 h-4" /> Batal Edit</button>}</div>
 
         <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
           <label className="md:col-span-2"><span className="text-xs font-bold text-slate-600">Nama Kegiatan</span><input value={eventName} onChange={(e) => setEventName(e.target.value)} placeholder="Contoh: Outing Class Grade 7" className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" /></label>
@@ -170,10 +178,13 @@ export const AcademicCalendarAdmin: React.FC<Props> = ({ onBack, onChanged }) =>
         </div>
 
         {scope === "CLASS" && <div className="rounded-2xl border border-slate-200 p-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3"><div><div className="font-black text-sm">Kelas Terdampak</div><div className="text-[11px] text-slate-500">{selectedClassIds.length} kelas dipilih</div></div><div className="relative sm:w-72"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" /><input value={classSearch} onChange={(e) => setClassSearch(e.target.value)} placeholder="Cari kelas..." className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-sm" /></div></div>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3"><div><div className="font-black text-sm">Kelas Terdampak</div><div className="text-[11px] text-slate-500">{selectedClassIds.length} kelas dasar dipilih • {combinedCount} label gabungan disederhanakan</div></div><div className="relative sm:w-72"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" /><input value={classSearch} onChange={(e) => setClassSearch(e.target.value)} placeholder="Cari kelas..." className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-sm" /></div></div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 max-h-64 overflow-y-auto pr-1">{filteredClasses.map((row) => { const selected = selectedClassIds.includes(row.id); return <button type="button" key={row.id} onClick={() => toggleClass(row.id)} className={`text-left rounded-xl border px-3 py-2.5 text-sm flex items-center gap-2 ${selected ? "border-teal-300 bg-teal-50 text-teal-900" : "border-slate-200 bg-white hover:bg-slate-50"}`}><span className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${selected ? "bg-teal-600 border-teal-600 text-white" : "border-slate-300"}`}>{selected && <Check className="w-3.5 h-3.5" />}</span><span className="font-bold truncate">{row.display_name}</span></button>; })}</div>
         </div>}
 
+        {unresolvedLegacyIds.length > 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">{unresolvedLegacyIds.length} target kelas gabungan lama belum bisa diurai. Sistem mempertahankannya saat revisi agar jadwal lama tidak hilang. Periksa Master Data untuk melengkapi kelas dasarnya.</div>}
+        <p className="text-xs text-slate-500">Kelas gabungan dikenali otomatis dari jadwal. Memilih satu kelas dasar juga memengaruhi sesi gabungan yang memuatnya.</p>
+        {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-800">Gagal menyimpan kegiatan: {error}</div>}
         <div className="flex justify-end"><button disabled={!canManage || saving} onClick={() => void save()} className="px-5 py-3 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white font-black flex items-center gap-2">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {editing ? "Simpan Revisi" : "Tambahkan ke Kalender"}</button></div>
       </section>
 

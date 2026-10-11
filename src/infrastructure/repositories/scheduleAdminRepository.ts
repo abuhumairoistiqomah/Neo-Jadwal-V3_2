@@ -46,6 +46,8 @@ export interface ScheduleIncidentalEditInput {
   specialNote?: string | null;
   reason?: string | null;
   incidentalType?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
   allowTeacherConflict?: boolean;
 }
 
@@ -155,10 +157,12 @@ export class ScheduleAdminRepository {
     specialNote?: string | null;
     reason?: string | null;
     incidentalType?: string | null;
+    startTime?: string | null;
+    endTime?: string | null;
     allowTeacherConflict?: boolean;
   }): Promise<string[]> {
     const client = requireSupabaseClient();
-    const { data, error } = await client.rpc("ejadwal_upsert_schedule_incidental_session_v2", {
+    const { data, error } = await client.rpc("ejadwal_upsert_schedule_incidental_session_v3", {
       p_rows: args.rows.map((row) => ({ incidental_id: row.incidentalId || null, class_id: row.classId, period: row.period })),
       p_schedule_date: args.scheduleDate,
       p_kind: args.kind,
@@ -171,6 +175,8 @@ export class ScheduleAdminRepository {
       p_special_note: args.specialNote || null,
       p_reason: args.reason || null,
       p_incidental_type: args.incidentalType || null,
+      p_start_time: args.startTime || null,
+      p_end_time: args.endTime || null,
       p_allow_teacher_conflict: Boolean(args.allowTeacherConflict),
     });
     if (error) throw error;
@@ -179,7 +185,7 @@ export class ScheduleAdminRepository {
 
   async upsertScheduleIncidental(input: ScheduleIncidentalEditInput): Promise<string> {
     const client = requireSupabaseClient();
-    const { data, error } = await client.rpc("ejadwal_upsert_schedule_incidental_v2", {
+    const { data, error } = await client.rpc("ejadwal_upsert_schedule_incidental_v3", {
       p_incidental_id: input.incidentalId || null,
       p_schedule_date: input.scheduleDate,
       p_class_id: input.classId,
@@ -194,6 +200,8 @@ export class ScheduleAdminRepository {
       p_special_note: input.specialNote || null,
       p_reason: input.reason || null,
       p_incidental_type: input.incidentalType || null,
+      p_start_time: input.startTime || null,
+      p_end_time: input.endTime || null,
       p_allow_teacher_conflict: Boolean(input.allowTeacherConflict),
     });
     if (error) throw error;
@@ -207,6 +215,54 @@ export class ScheduleAdminRepository {
       p_reason: reason || null,
     });
     if (error) throw error;
+  }
+
+  /** Atomic date-specific room edit: never updates schedule_master. */
+  async relocateRoomForDate(input: {
+    scheduleDate: string;
+    period: number;
+    classIds: string[];
+    roomId: string;
+    reason: string;
+  }): Promise<number> {
+    const client = requireSupabaseClient();
+    const { data, error } = await client.rpc("ejadwal_relocate_room_date_v1", {
+      p_schedule_date: input.scheduleDate,
+      p_period: input.period,
+      p_class_ids: input.classIds,
+      p_room_id: input.roomId,
+      p_reason: input.reason,
+    });
+    if (error) throw error;
+    return Number(data || 0);
+  }
+
+  /** Creates a date-specific additional session and claims a room in one transaction. */
+  async addRoomSessionForDate(input: {
+    scheduleDate: string;
+    period: number;
+    classId: string;
+    subject: string;
+    roomId: string;
+    teacherIds: string[];
+    teacherNames: string[];
+    reason: string;
+    allowTeacherConflict?: boolean;
+  }): Promise<string> {
+    const client = requireSupabaseClient();
+    const { data, error } = await client.rpc("ejadwal_add_room_session_date_v1", {
+      p_schedule_date: input.scheduleDate,
+      p_period: input.period,
+      p_class_id: input.classId,
+      p_subject: input.subject,
+      p_room_id: input.roomId,
+      p_teacher_ids: input.teacherIds,
+      p_teacher_names: input.teacherNames,
+      p_reason: input.reason,
+      p_allow_teacher_conflict: Boolean(input.allowTeacherConflict),
+    });
+    if (error) throw error;
+    return String(data || "");
   }
 
   async updateScheduleMaster(input: ScheduleMasterEditInput): Promise<void> {

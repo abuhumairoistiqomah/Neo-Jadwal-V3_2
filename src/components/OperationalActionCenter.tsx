@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   UserRoundCheck,
 } from "lucide-react";
+import { isConflictHidden, readHiddenConflicts, CONFLICT_HIDE_STORAGE_KEY, type HiddenConflictRecords } from "../domain/conflictAcknowledgements";
 import type { ActivePage, JadwalInsidentalItem, KalenderAkademikItem, LogIzinItem, ScheduleItem } from "../domain/models";
 import { groupWaitingBadalRows, type LeaveReviewRequest, type WaitingBadalSession } from "../domain/leaveApproval";
 import { detectScheduleConflicts, type ScheduleConflict } from "../domain/scheduleConflicts";
@@ -95,14 +96,16 @@ export const OperationalActionCenter: React.FC<OperationalActionCenterProps> = (
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [hiddenConflicts, setHiddenConflicts] = useState<HiddenConflictRecords>(readHiddenConflicts);
 
   const missingTasks = useMemo(
     () => deriveMissingTaskActions(logs, schoolToday),
     [logs, schoolToday],
   );
   const conflicts = useMemo(
-    () => filterActionableConflicts(detectScheduleConflicts(schedules, incidentals, kalenderAkademik), schoolToday),
-    [schedules, incidentals, kalenderAkademik, schoolToday],
+    () => filterActionableConflicts(detectScheduleConflicts(schedules, incidentals, kalenderAkademik), schoolToday)
+      .filter((conflict) => !isConflictHidden(conflict, hiddenConflicts)),
+    [schedules, incidentals, kalenderAkademik, schoolToday, hiddenConflicts],
   );
   const summary = useMemo(() => summarizeOperationalActions({
     pendingRequests,
@@ -133,7 +136,14 @@ export const OperationalActionCenter: React.FC<OperationalActionCenterProps> = (
   useEffect(() => {
     void load();
     const timer = window.setInterval(() => void load(), 60_000);
-    return () => window.clearInterval(timer);
+    const sync = (event: StorageEvent) => {
+      if (event.key === CONFLICT_HIDE_STORAGE_KEY) setHiddenConflicts(readHiddenConflicts());
+    };
+    window.addEventListener("storage", sync);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("storage", sync);
+    };
   }, []);
 
   const openMissingTask = (item: MissingTaskActionItem) => {

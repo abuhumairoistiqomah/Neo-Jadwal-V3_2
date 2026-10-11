@@ -1,3 +1,25 @@
+## V3.14.6 RC3.4 — Time override per tanggal (staging only)
+
+Insidental and Dashboard Quick Edit can specify a date-only start/end clock for a class/JP without modifying the master timetable. Requires `supabase/migrations/202610110004_v3_14_6_dated_time_overrides.sql`. See `TRACE_V3_14_6_RC3_4_DATED_TIME_OVERRIDE.md` for release order and smoke tests.
+
+# E-Jadwal V3.14.6 RC3 — Flexible Dated Incidentals
+
+**Continuation from RC2. STAGING RELEASE CANDIDATE, NOT YET PRODUCTION VERIFIED.**
+
+Changes: a room double-booking no longer blocks saving a dated incidental; conflict stays visible in Jadwal Ruangan / Conflict Center for later repair. Dated override matches class + date + JP regardless of master subject; type auto-selected by active master slot. Explicit teacher list replaces old master teacher team, while room-only edits inherit it.
+
+**New SQL is mandatory before testing writes:** `supabase/migrations/202610110003_v3_14_6_incidental_conflicts_nonblocking.sql`, AFTER RC1 migration `...0001...` and RC2 `...0002...` (if not already installed). Applies only to the staging database initially. Frontend deployment alone is insufficient. See `TRACE_V3_14_6_RC3_FLEXIBLE_INCIDENTALS.md` for test cases and release gates.
+
+---
+
+# E-Jadwal V3.14.6 RC2 — Shared Insidental Sessions
+
+Based on V3.14.6 RC1, fixes the false teacher/room conflict for an intentional combined dated activity (e.g., Gladi Resik TKA shared by 12 AE and 12 MQ Akhwat).
+
+**Requires NEW SQL migration on staging:** `supabase/migrations/202610110002_v3_14_6_incidental_combined_sessions.sql` (after RC1 migration `202610110001_v3_14_6_weekly_room_editor.sql`). **Do not push to production yet.** See `TRACE_V3_14_6_RC2_INCIDENTAL_SHARED_SESSIONS.md`.
+
+---
+
 # E-Jadwal V3.14.5 — PNG Jadwal Guru + Hapus PDF Jadwal Kelas
 
 Based on V3.14.4.3 (regression and TypeScript hotfixes retained).
@@ -101,3 +123,16 @@ Upgrade from V3.14.1:
 ```
 
 See `TRACE_V3_14_2_EXPORT_ALTERNATING_CONSTRAINT_HOTFIX.md` for design notes and smoke tests.
+
+
+## V3.14.6 RC3.2 — Incidentals own their class/date/JP slot
+
+- Fixes the Dashboard Wali Kelas / class daily timetable showing original teacher names and subjects alongside a dated incidental.
+- Uses the canonical effective-schedule projection, matching by **date + class + JP**, regardless of the original subject.
+- When AE and MQ have different original subjects but join the same Gladi Resik, the original subjects/teachers are hidden from the dated view. The recurring master is unchanged.
+- Room-only relocation continues to inherit the original subject and teachers. Explicit incidental teacher teams replace the entire master team.
+- Includes the RC3.1 Syaikh mass publish diagnostics. No additional Supabase migration is required beyond V3.14.6 RC1–RC3, and no changes to GAS or OAuth.
+
+**Validation:** syntax parse of 153 TypeScript files passed; targeted TypeScript domain typecheck passed; 269/271 offline regression tests passed with two modules unavailable because this runner lacks React and Supabase dependencies. Windows `npm.cmd test`, `npm.cmd run lint`, `npm.cmd run build`, live database and browser smoke remain required.
+
+Read `TRACE_V3_14_6_RC3_2_INCIDENTAL_SLOT_OWNERSHIP.md` before publishing to Vercel.

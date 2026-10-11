@@ -39,6 +39,6 @@ test("V3.14.1 Quick Edit supports ALTERNATING class mode", () => {
   assert.match(quickEdit, /1 kali \/ 4 minggu/);
   assert.match(quickEdit, /ALTERNATING/);
   assert.match(repo, /ejadwal_update_schedule_master_v4/);
-  assert.match(repo, /ejadwal_upsert_schedule_incidental_session_v2/);
+  assert.match(repo, /ejadwal_upsert_schedule_incidental_session_v[23]/);
   assert.match(migration, /p_class_mode text/);
 });

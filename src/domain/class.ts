@@ -28,8 +28,8 @@ export function isClassMatch(classField: string | null | undefined, targetClass:
 
   if (!cleanField || !cleanTarget) return false;
 
-  // Split by common delimiters: comma, semicolon, slash, pipe, ampersand, 'and', newline
-  const splitRegex = /[;,/|\n&]+|\band\b/i;
+  // Split by common delimiters: comma, semicolon, slash, pipe, ampersand, plus, 'and', newline
+  const splitRegex = /[;,/|\n&+]+|\band\b/i;
 
   const fieldParts = cleanField.split(splitRegex).map(p => p.trim()).filter(Boolean);
   const targetParts = cleanTarget.split(splitRegex).map(p => p.trim()).filter(Boolean);

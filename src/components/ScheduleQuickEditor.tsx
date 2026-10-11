@@ -7,6 +7,7 @@ import { ScheduleAdminRepository, type ScheduleAdminContext } from "../infrastru
 import { getCurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
 import { dateMatchesScheduleDay, nextOccurrenceISO, type ScheduleMutationMode } from "../domain/scheduleMutation";
 import { parseScheduleClassMode, type ScheduleClassMode } from "../domain/schedule/classMode";
+import { timeForInput, validateDatedTimeOverride } from "../domain/schedule/datedTimeOverride";
 
 const DAY_OPTIONS = [
   { name: "Senin", value: 1 },
@@ -37,6 +38,13 @@ function inferRotationWeeks(note: string): number {
 
 export const ScheduleQuickEditor: React.FC<ScheduleQuickEditorProps> = ({ items, allSchedules, incidentals = [], initialDate, onClose, onSaved }) => {
   const primary = items[0];
+  // Opening a dated effective slot must not leak its temporary clock into
+  // the default permanent-edit fields.
+  const canonicalMaster = allSchedules.find((row) =>
+    row.id === (primary as (ScheduleItem & { masterId?: string }) | undefined)?.masterId
+    || row.id === primary?.id);
+  const masterStart = canonicalMaster?.mulai || primary?.mulai || "";
+  const masterEnd = canonicalMaster?.selesai || primary?.selesai || "";
   const repo = useMemo(() => new ScheduleAdminRepository(), []);
   const [context, setContext] = useState<ScheduleAdminContext | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,8 +54,9 @@ export const ScheduleQuickEditor: React.FC<ScheduleQuickEditorProps> = ({ items,
   const [classId, setClassId] = useState<string>("");
   const [day, setDay] = useState(dayNumber(primary?.hari || "Senin"));
   const [period, setPeriod] = useState(Number(primary?.jam_ke || 1));
-  const [startTime, setStartTime] = useState(primary?.mulai || "");
-  const [endTime, setEndTime] = useState(primary?.selesai || "");
+  const [startTime, setStartTime] = useState(masterStart);
+  const [endTime, setEndTime] = useState(masterEnd);
+  const [useDatedTime, setUseDatedTime] = useState(false);
   const [roomId, setRoomId] = useState(primary?.ruangan || "");
   const initialClassMode = parseScheduleClassMode(primary?.kelasgabung);
   const [combined, setCombined] = useState(initialClassMode === "ALTERNATING" ? false : items.length > 1 || initialClassMode === "COMBINED");
@@ -78,6 +87,16 @@ export const ScheduleQuickEditor: React.FC<ScheduleQuickEditorProps> = ({ items,
       setTeacherIds(ids);
     }).catch((err) => setError(err instanceof Error ? err.message : "Gagal memuat editor jadwal.")).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (mutationMode !== "INCIDENTAL") return;
+    const existing = incidentals.find((row) => row.tanggal === incidentalDate
+      && Number(row.jam_ke) === Number(primary?.jam_ke)
+      && normalizeImportKey(row.kelas) === normalizeImportKey(primary?.kelas));
+    setUseDatedTime(Boolean(existing?.mulai && existing?.selesai));
+    setStartTime(timeForInput(existing?.mulai || masterStart));
+    setEndTime(timeForInput(existing?.selesai || masterEnd));
+  }, [mutationMode, incidentalDate, incidentals, primary?.kelas, primary?.jam_ke, masterStart, masterEnd]);
 
   const selectedTeachers = useMemo(() => {
     if (!context) return [];
@@ -142,8 +161,14 @@ export const ScheduleQuickEditor: React.FC<ScheduleQuickEditorProps> = ({ items,
       if (!incidentalDate) return setError("Tanggal perubahan insidental wajib dipilih.");
       if (!dateMatchesScheduleDay(incidentalDate, primary?.hari || "")) return setError(`Tanggal insidental harus jatuh pada hari ${primary?.hari || "yang sama"} agar menggantikan sesi ini, bukan membuat sesi ganda.`);
       if (!incidentalReason.trim()) return setError("Alasan perubahan insidental wajib diisi.");
+      if (useDatedTime) {
+        const timeError = validateDatedTimeOverride(startTime, endTime);
+        if (timeError) return setError(timeError);
+        if (!startTime || !endTime) return setError("Isi kedua jam ketika perubahan waktu aktif.");
+      }
     }
-    if (hardConflicts.length) return setError("Selesaikan bentrok kelas/ruangan sebelum menyimpan.");
+    // Master conflicts are blocking; dated incidentals are operational warnings.
+    if (mutationMode === "PERMANENT" && hardConflicts.length) return setError("Selesaikan bentrok kelas/ruangan sebelum menyimpan.");
     const allowTeacherConflict = teacherWarnings.length > 0;
     if (allowTeacherConflict && !window.confirm(`Ada ${teacherWarnings.length} warning potensi bentrok guru:
 
@@ -182,6 +207,7 @@ Tetap simpan perubahan ini?`)) return;
           roomId: roomId || null, isCombined: classMode === "COMBINED", classMode, teacherIds,
           teacherNames: selectedTeachers.map((teacher) => teacher.full_name),
           specialNote: persistedSpecialNote, reason: incidentalReason.trim(), incidentalType, allowTeacherConflict,
+          startTime: useDatedTime ? startTime : null, endTime: useDatedTime ? endTime : null,
         });
       }
       await onSaved();
@@ -209,7 +235,7 @@ Tetap simpan perubahan ini?`)) return;
             <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4">
               <div className="text-xs font-black uppercase tracking-wide text-blue-700">Jenis Perubahan</div>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <button type="button" onClick={() => setMutationMode("PERMANENT")} className={`rounded-xl border p-3 text-left ${mutationMode === "PERMANENT" ? "border-blue-400 bg-white ring-2 ring-blue-100" : "border-slate-200 bg-white/70"}`}><div className="font-black text-sm text-slate-900">Ubah Jadwal Tetap</div><div className="mt-1 text-xs text-slate-500">Mengubah master dan berlaku pada minggu-minggu berikutnya.</div></button>
+                <button type="button" onClick={() => { setMutationMode("PERMANENT"); setStartTime(masterStart); setEndTime(masterEnd); }} className={`rounded-xl border p-3 text-left ${mutationMode === "PERMANENT" ? "border-blue-400 bg-white ring-2 ring-blue-100" : "border-slate-200 bg-white/70"}`}><div className="font-black text-sm text-slate-900">Ubah Jadwal Tetap</div><div className="mt-1 text-xs text-slate-500">Mengubah master dan berlaku pada minggu-minggu berikutnya.</div></button>
                 <button type="button" onClick={() => setMutationMode("INCIDENTAL")} className={`rounded-xl border p-3 text-left ${mutationMode === "INCIDENTAL" ? "border-violet-400 bg-white ring-2 ring-violet-100" : "border-slate-200 bg-white/70"}`}><div className="font-black text-sm text-slate-900">Hanya Tanggal Ini</div><div className="mt-1 text-xs text-slate-500">Membuat override insidental; master tidak berubah.</div></button>
               </div>
               {mutationMode === "INCIDENTAL" && <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -226,9 +252,14 @@ Tetap simpan perubahan ini?`)) return;
               <Field label="Ruangan"><select value={roomId} onChange={(e) => setRoomId(e.target.value)} className="input"><option value="">— Tanpa / belum ditentukan —</option>{context?.rooms.filter((room) => room.status === "ACTIVE").map((room) => <option key={room.id} value={room.id}>{room.name} ({room.id})</option>)}</select></Field>
               <Field label="Hari"><select value={day} onChange={(e) => setDay(Number(e.target.value))} disabled={mutationMode === "INCIDENTAL"} className="input disabled:bg-slate-100 disabled:text-slate-500">{DAY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.name}</option>)}</select></Field>
               <Field label="JP"><select value={period} onChange={(e) => setPeriod(Number(e.target.value))} disabled={mutationMode === "INCIDENTAL"} className="input disabled:bg-slate-100 disabled:text-slate-500">{[0,1,2,3,4,5,6].map((jp) => <option key={jp} value={jp}>{jp === 0 ? "JP-0 Homeroom" : `JP ${jp}`}</option>)}</select></Field>
-              <Field label="Mulai"><input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={mutationMode === "INCIDENTAL"} className="input disabled:bg-slate-100 disabled:text-slate-500" /></Field>
-              <Field label="Selesai"><input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={mutationMode === "INCIDENTAL"} className="input disabled:bg-slate-100 disabled:text-slate-500" /></Field>
+              <Field label="Mulai"><input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={mutationMode === "INCIDENTAL" && !useDatedTime} className="input disabled:bg-slate-100 disabled:text-slate-500" /></Field>
+              <Field label="Selesai"><input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={mutationMode === "INCIDENTAL" && !useDatedTime} className="input disabled:bg-slate-100 disabled:text-slate-500" /></Field>
             </div>
+
+            {mutationMode === "INCIDENTAL" && <label className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 p-3 text-xs font-semibold text-violet-800">
+              <input type="checkbox" checked={useDatedTime} onChange={(e) => setUseDatedTime(e.target.checked)} />
+              Atur jam khusus tanggal ini (JP tidak berubah; master tetap). Contoh: JP2 09:20–10:20.
+            </label>}
 
             <div className="grid gap-3 sm:grid-cols-2">
               <label className={`flex items-start gap-3 rounded-2xl border p-3 ${combined ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
@@ -276,12 +307,12 @@ Tetap simpan perubahan ini?`)) return;
               <p className="mt-2 text-xs text-amber-700">Warning tidak mengunci editor. Admin dapat tetap menyimpan setelah konfirmasi.</p>
             </div>}
 
-            <div className={`rounded-2xl border p-4 ${hardConflicts.length ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}`}>
-              <div className="flex items-center gap-2 font-black">{hardConflicts.length ? <AlertTriangle className="w-5 h-5 text-rose-700" /> : <CheckCircle2 className="w-5 h-5 text-emerald-700" />}<span className={hardConflicts.length ? "text-rose-900" : "text-emerald-900"}>{hardConflicts.length ? `${hardConflicts.length} bentrok kelas/ruangan ditemukan` : "Pre-save validation aman"}</span></div>
+            <div className={`rounded-2xl border p-4 ${hardConflicts.length ? (mutationMode === "INCIDENTAL" ? "border-amber-200 bg-amber-50" : "border-rose-200 bg-rose-50") : "border-emerald-200 bg-emerald-50"}`}>
+              <div className="flex items-center gap-2 font-black">{hardConflicts.length ? <AlertTriangle className="w-5 h-5 text-rose-700" /> : <CheckCircle2 className="w-5 h-5 text-emerald-700" />}<span className={hardConflicts.length ? "text-rose-900" : "text-emerald-900"}>{hardConflicts.length ? `${hardConflicts.length} potensi bentrok kelas/ruangan ${mutationMode === "INCIDENTAL" ? "(warning, tetap bisa disimpan)" : "(blocking)"}` : "Pre-save validation aman"}</span></div>
               {hardConflicts.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-xs font-semibold text-rose-800">{hardConflicts.map((conflict) => <li key={conflict}>{conflict}</li>)}</ul>}
             </div>
 
-            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4"><button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600">Batal</button><button onClick={() => void save()} disabled={busy || hardConflicts.length > 0} className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-black text-white disabled:bg-slate-300">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {mutationMode === "INCIDENTAL" ? "Simpan Hanya Tanggal Ini" : "Simpan Jadwal Tetap"}</button></div>
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4"><button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600">Batal</button><button onClick={() => void save()} disabled={busy || (mutationMode === "PERMANENT" && hardConflicts.length > 0)} className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-black text-white disabled:bg-slate-300">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {mutationMode === "INCIDENTAL" ? "Simpan Hanya Tanggal Ini" : "Simpan Jadwal Tetap"}</button></div>
           </div>
         )}
       </div>

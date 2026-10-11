@@ -576,6 +576,14 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
     };
   };
 
+  // Prefer the concrete dated time in "Minggu Ini"; column time is only a
+  // baseline and may differ after a one-day schedule adjustment.
+  const classCellTime = (items: ScheduleItem[], fallback: string): string => {
+    if (scheduleViewMode === "MASTER") return fallback;
+    const dated = items.find((item) => "source" in item && item.source !== "MASTER" && item.mulai && item.selesai);
+    return dated ? `${dated.mulai} - ${dated.selesai}` : fallback;
+  };
+
   // Export an isolated, class-free clone so html2canvas never has to parse
   // Tailwind/Vite OKLCH styles from the live application document.
   const handleDownloadImage = async () => {
@@ -877,7 +885,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                                   onClick={() => setSelectedDetail({
                                     hari,
                                     jam,
-                                    waktu: col.timeRange,
+                                    waktu: classCellTime(items, col.timeRange),
                                     items,
                                   })}
                                   className={`relative p-3 border-r border-slate-200 text-center transition-all align-middle cursor-pointer hover:scale-[1.01] hover:shadow-xs active:scale-[0.98] ${visual.desktop}`}
@@ -901,7 +909,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                                   </div>
                                   {visual.label && <div className="text-[9px] mt-1 font-black uppercase tracking-wide opacity-75">{visual.label}</div>}
                                   <div className="text-[9px] mt-0.5 text-slate-400 font-bold">
-                                    {col.timeRange}
+                                    {classCellTime(items, col.timeRange)}
                                   </div>
                                 </td>
                               );
@@ -1006,7 +1014,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                                 onClick={() => setSelectedDetail({
                                   hari: "Jumat",
                                   jam,
-                                  waktu: col.timeRange,
+                                  waktu: classCellTime(items, col.timeRange),
                                   items,
                                 })}
                                 className={`relative p-3 border-r border-slate-200 text-center transition-all align-middle cursor-pointer hover:scale-[1.01] hover:shadow-xs active:scale-[0.98] ${visual.desktop}`}
@@ -1030,7 +1038,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                                 </div>
                                 {visual.label && <div className="text-[9px] mt-1 font-black uppercase tracking-wide opacity-75">{visual.label}</div>}
                                 <div className="text-[9px] mt-0.5 text-slate-400 font-bold">
-                                  {col.timeRange}
+                                  {classCellTime(items, col.timeRange)}
                                 </div>
                               </td>
                             );
@@ -1123,7 +1131,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                                     onClick={() => setSelectedDetail({
                                       hari,
                                       jam,
-                                      waktu: col.timeRange,
+                                      waktu: classCellTime(items, col.timeRange),
                                       items,
                                     })}
                                     className={`relative p-3 rounded-lg border flex items-center justify-between gap-3 cursor-pointer hover:ring-2 transition-all active:scale-[0.98] ${visual.mobile}`}
@@ -1145,7 +1153,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                                         Jam {jam}
                                       </span>
                                       <span className="text-xs font-semibold text-slate-500">
-                                        {col.timeRange}
+                                        {classCellTime(items, col.timeRange)}
                                       </span>
                                       <h4 className="font-bold text-slate-800 text-sm mt-1" title={displayMapelFull}>{displayMapel}</h4>
                                       <p className="text-xs opacity-95 text-slate-600 mt-1 font-medium">

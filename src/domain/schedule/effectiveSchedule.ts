@@ -38,6 +38,8 @@ export interface EffectiveScheduleItem extends ScheduleItem {
   incidentalId?: string;
   incidentalReason?: string;
   incidentalType?: string;
+  /** Indicates an explicit dated teacher-team replacement, not a room-only move. */
+  teacherTeamReplaced?: boolean;
 
   scheduledTeachers: string[];
   absentTeachers: string[];
@@ -123,13 +125,19 @@ function applyIncidentalOverride(
 ): EffectiveScheduleItem {
   const inheritedTeachers = {} as Pick<ScheduleItem, TeacherField>;
   TEACHER_FIELDS.forEach((field) => {
-    inheritedTeachers[field] = inheritString(incidental[field], master[field]);
+    inheritedTeachers[field] = incidental.replaceTeachers
+      ? String(incidental[field] || "").trim()
+      : inheritString(incidental[field], master[field]);
   });
 
   const merged: ScheduleItem = {
     ...master,
-    kelas: inheritString(incidental.kelas, master.kelas),
+    // Preserve the concrete master class identity. A combined-class incidental may
+    // cover several classes, but must not rename each effective row to the whole group.
+    kelas: master.kelas,
     mapel: inheritString(incidental.mapel, master.mapel),
+    mulai: inheritString(incidental.mulai, master.mulai),
+    selesai: inheritString(incidental.selesai, master.selesai),
     ...inheritedTeachers,
     kelasgabung: inheritString(incidental.kelasgabung, master.kelasgabung),
     ruangan: inheritString(incidental.ruangan, master.ruangan),
@@ -144,6 +152,7 @@ function applyIncidentalOverride(
     incidentalId: incidental.id,
     incidentalReason: incidental.alasan || "",
     incidentalType: incidental.tipe_insidental || "",
+    teacherTeamReplaced: Boolean(incidental.replaceTeachers),
   });
 }
 
@@ -161,8 +170,8 @@ function createStandaloneIncidental(
     kelas: incidental.kelas || "",
     hari: dayName,
     jam_ke: Number(incidental.jam_ke),
-    mulai,
-    selesai,
+    mulai: inheritString(incidental.mulai, mulai),
+    selesai: inheritString(incidental.selesai, selesai),
     mapel: incidental.mapel || "",
     guru1: incidental.guru1 || "",
     guru2: incidental.guru2 || "",
@@ -182,6 +191,7 @@ function createStandaloneIncidental(
     incidentalId: incidental.id,
     incidentalReason: incidental.alasan || "",
     incidentalType: incidental.tipe_insidental || "",
+    teacherTeamReplaced: Boolean(incidental.replaceTeachers),
   });
 }
 
@@ -193,6 +203,7 @@ function createEffectiveItem(args: {
   incidentalId?: string;
   incidentalReason?: string;
   incidentalType?: string;
+  teacherTeamReplaced?: boolean;
 }): EffectiveScheduleItem {
   const scheduledTeachers = uniqueNames(TEACHER_FIELDS.map((field) => args.schedule[field]));
 
@@ -204,6 +215,7 @@ function createEffectiveItem(args: {
     incidentalId: args.incidentalId,
     incidentalReason: args.incidentalReason || "",
     incidentalType: args.incidentalType || "",
+    teacherTeamReplaced: Boolean(args.teacherTeamReplaced),
     scheduledTeachers,
     absentTeachers: [],
     substituteTeachers: [],
@@ -217,7 +229,15 @@ function createEffectiveItem(args: {
 }
 
 function applyLogs(item: EffectiveScheduleItem, logs: LogIzinItem[]): EffectiveScheduleItem {
-  const relevantLogs = logs.filter((log) => isLogForSlot(log, item.tanggal, item.kelas, item.jam_ke));
+  const relevantLogs = logs.filter((log) => {
+    if (!isLogForSlot(log, item.tanggal, item.kelas, item.jam_ke)) return false;
+    // A new explicit teacher team supersedes the old lesson; old teachers' leave
+    // records remain in the log but must not re-appear on the new class schedule.
+    if (item.teacherTeamReplaced) {
+      return item.scheduledTeachers.some((teacher) => normalizeName(teacher) === normalizeName(log.guru_izin));
+    }
+    return true;
+  });
   if (relevantLogs.length === 0) return item;
 
   const absentTeachers = uniqueNames(relevantLogs.map((log) => log.guru_izin));
@@ -288,7 +308,8 @@ function compareEffectiveScheduleItems(a: EffectiveScheduleItem, b: EffectiveSch
  *
  * Important rules:
  * - Incidental identity is date + class + jam_ke; mapel is NOT part of identity.
- * - Blank incidental values inherit the master value field-by-field.
+ * - Blank incidental values inherit master values, except a Supabase-explicit
+ *   teacher-team replacement: any unused teacher positions are cleared.
  * - Unmatched incidentals become additional schedule rows.
  * - Log_Izin removes the absent teacher and adds guru_pengganti when supplied.
  * - Kalender_Akademik is applied last and marks the slot inactive instead of
@@ -310,6 +331,7 @@ export function buildEffectiveScheduleForDate({
   const daySchedules = schedules.filter((schedule) => normalizeDay(schedule.hari) === normalizeDay(dayName));
   const dateIncidentals = jadwalInsidental.filter((incidental) => isIncidentalForDate(incidental, normalizedDate));
   const matchedIncidentalIndices = new Set<number>();
+  const overriddenClassSlots = new Set<string>();
 
   const masterDerivedItems = daySchedules.map((master) => {
     const incidentalIndex = dateIncidentals.findIndex(
@@ -328,6 +350,11 @@ export function buildEffectiveScheduleForDate({
     }
 
     matchedIncidentalIndices.add(incidentalIndex);
+    // Legacy master data may contain multiple subjects for the same class/JP.
+    // Once a dated incidental occupies that slot, it becomes ONE effective row.
+    const slotKey = `${normalizeName(master.kelas)}|${Number(master.jam_ke)}`;
+    if (overriddenClassSlots.has(slotKey)) return null;
+    overriddenClassSlots.add(slotKey);
     return applyIncidentalOverride(master, dateIncidentals[incidentalIndex], normalizedDate);
   });
 
@@ -336,7 +363,7 @@ export function buildEffectiveScheduleForDate({
     .filter(({ index }) => !matchedIncidentalIndices.has(index))
     .map(({ incidental, index }) => createStandaloneIncidental(incidental, normalizedDate, dayName, index));
 
-  return [...masterDerivedItems, ...additionalItems]
+  return [...masterDerivedItems.filter((item): item is EffectiveScheduleItem => item !== null), ...additionalItems]
     .map((item) => applyLogs(item, logs))
     .map((item) => applyAcademicCalendar(item, kalenderAkademik))
     .sort(compareEffectiveScheduleItems);

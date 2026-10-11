@@ -4,6 +4,8 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock3,
+  Eye,
+  EyeOff,
   GitBranch,
   History,
   Loader2,
@@ -11,8 +13,10 @@ import {
   RotateCcw,
   ShieldAlert,
 } from "lucide-react";
+import { isConflictHidden, readHiddenConflicts, updateHiddenConflict, writeHiddenConflicts, CONFLICT_HIDE_STORAGE_KEY, type HiddenConflictRecords } from "../domain/conflictAcknowledgements";
 import type { JadwalInsidentalItem, KalenderAkademikItem, ScheduleItem } from "../domain/models";
 import { detectScheduleConflicts } from "../domain/scheduleConflicts";
+import { localISODate, visibleScheduleConflicts } from "../domain/operationalConflictVisibility";
 import {
   ScheduleVersionRepository,
   type ScheduleVersionRow,
@@ -88,12 +92,27 @@ export const ScheduleControlCenter: React.FC<ScheduleControlCenterProps> = ({
 }) => {
   const repo = useMemo(() => new ScheduleVersionRepository(), []);
   const [tab, setTab] = useState<"history" | "conflict">("history");
+  const [showExpired, setShowExpired] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+  const [hiddenConflicts, setHiddenConflicts] = useState<HiddenConflictRecords>(readHiddenConflicts);
   const [versions, setVersions] = useState<ScheduleVersionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyVersionId, setBusyVersionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const conflicts = useMemo(() => detectScheduleConflicts(schedules, incidentals, kalenderAkademik), [schedules, incidentals, kalenderAkademik]);
+  const allConflicts = useMemo(() => detectScheduleConflicts(schedules, incidentals, kalenderAkademik), [schedules, incidentals, kalenderAkademik]);
+  const todayISO = localISODate();
+  const actionableConflicts = useMemo(() => visibleScheduleConflicts(allConflicts, todayISO, showExpired), [allConflicts, todayISO, showExpired]);
+  const hiddenCount = actionableConflicts.filter((item) => isConflictHidden(item, hiddenConflicts)).length;
+  const conflicts = useMemo(() => actionableConflicts.filter((item) => showHidden || !isConflictHidden(item, hiddenConflicts)), [actionableConflicts, hiddenConflicts, showHidden]);
+  const toggleHidden = (conflict: (typeof allConflicts)[number], hide: boolean) => {
+    setHiddenConflicts((current) => {
+      const next = updateHiddenConflict(current, conflict, hide);
+      writeHiddenConflicts(next);
+      return next;
+    });
+  };
+  const expiredCount = allConflicts.length - visibleScheduleConflicts(allConflicts, todayISO).length;
   const blockers = conflicts.filter((item) => item.severity === "BLOCKER");
   const warnings = conflicts.filter((item) => item.severity === "WARNING");
 
@@ -111,6 +130,13 @@ export const ScheduleControlCenter: React.FC<ScheduleControlCenterProps> = ({
 
   useEffect(() => {
     void loadHistory();
+  }, []);
+  useEffect(() => {
+    const sync = (event: StorageEvent) => {
+      if (event.key === CONFLICT_HIDE_STORAGE_KEY) setHiddenConflicts(readHiddenConflicts());
+    };
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
   }, []);
 
   const rollback = async (version: ScheduleVersionRow) => {
@@ -242,11 +268,18 @@ export const ScheduleControlCenter: React.FC<ScheduleControlCenterProps> = ({
         </div>
       ) : (
         <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-600">
+            <span>Konflik lampau otomatis tersembunyi. Tombol Sudah Ditangani hanya menyembunyikan di browser ini, bukan menghapus konflik di Supabase.</span>
+            <div className="flex flex-wrap gap-4">
+              <label className="inline-flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={showHidden} onChange={(event) => setShowHidden(event.target.checked)} /> Lihat yang disembunyikan ({hiddenCount})</label>
+              <label className="inline-flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={showExpired} onChange={(event) => setShowExpired(event.target.checked)} /> Lihat histori konflik ({expiredCount})</label>
+            </div>
+          </div>
           {conflicts.length === 0 ? (
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-10 text-center">
               <CheckCircle2 className="mx-auto mb-3 h-10 w-10 text-emerald-600" />
-              <h3 className="font-black text-emerald-900">Tidak ada bentrok terdeteksi</h3>
-              <p className="mt-1 text-sm text-emerald-700">Master schedule dan jadwal insidental aktif terlihat konsisten.</p>
+              <h3 className="font-black text-emerald-900">{hiddenCount > 0 && !showHidden ? "Semua konflik yang relevan disembunyikan" : "Tidak ada bentrok terdeteksi"}</h3>
+              <p className="mt-1 text-sm text-emerald-700">{hiddenCount > 0 && !showHidden ? `${hiddenCount} peringatan disembunyikan di browser ini. Buka 'Lihat yang disembunyikan' untuk meninjau kembali; data jadwal tidak berubah.` : "Master schedule dan jadwal insidental aktif terlihat konsisten."}</p>
             </div>
           ) : conflicts.map((conflict) => (
             <div key={conflict.id} className={`rounded-2xl border p-5 shadow-sm ${conflict.severity === "BLOCKER" ? "border-rose-200 bg-rose-50/70" : "border-amber-200 bg-amber-50/70"}`}>
@@ -264,6 +297,14 @@ export const ScheduleControlCenter: React.FC<ScheduleControlCenterProps> = ({
                     <span className="rounded-lg bg-white/80 px-2.5 py-1">JP {conflict.period}</span>
                     {conflict.room && <span className="rounded-lg bg-white/80 px-2.5 py-1">📍 {conflict.room}</span>}
                     {conflict.classes.map((name) => <span key={name} className="rounded-lg bg-white/80 px-2.5 py-1">{name}</span>)}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button type="button" onClick={() => toggleHidden(conflict, !isConflictHidden(conflict, hiddenConflicts))}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                      title="Mengubah tampilan di browser ini; tidak menghapus data atau memperbaiki bentrok jadwal">
+                      {isConflictHidden(conflict, hiddenConflicts) ? <><Eye className="h-3.5 w-3.5" /> Tampilkan Lagi</> : <><EyeOff className="h-3.5 w-3.5" /> Sembunyikan / Sudah Ditangani</>}
+                    </button>
+                    {isConflictHidden(conflict, hiddenConflicts) && <span className="text-xs text-slate-500">Disembunyikan di browser ini</span>}
                   </div>
                 </div>
               </div>

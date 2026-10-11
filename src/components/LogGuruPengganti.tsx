@@ -79,7 +79,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
     // Format date beautifully Indonesian style
     const dateFormatted = formatIndoDate(tanggal);
 
-    let waText = `*Hal: Guru Pengganti*\n\nBismillah. Berikut nama - nama guru pengganti hari *${dateFormatted}*.\nInfo lebih lanjut, buka di situs jadwal digital: https://neojadwalv1.vercel.app/\n\n`;
+    let waText = `*Hal: Guru Pengganti*\n\nBismillah. Berikut nama - nama guru pengganti hari *${dateFormatted}*.\nInfo lebih lanjut, buka di situs jadwal digital: https://neojadwalv3.vercel.app/\n\n`;
     
     // Group items by Teacher Izin first so they appear neatly
     const teacherMap: Record<string, LogIzinItem[]> = {};

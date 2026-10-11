@@ -98,6 +98,11 @@ export interface JadwalInsidentalItem {
   alasan?: string;
   tipe_insidental?: string;
   kind?: "OVERRIDE" | "ADDITIONAL" | string;
+  /** Optional date-specific time override. Empty values inherit the master/JP clock. */
+  mulai?: string;
+  selesai?: string;
+  /** True when Supabase explicitly SET a teacher team; empty trailing positions must not inherit master teachers. */
+  replaceTeachers?: boolean;
 }
 
 export interface AdminAccount {
