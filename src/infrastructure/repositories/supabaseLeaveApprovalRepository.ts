@@ -8,6 +8,7 @@ import type {
 } from "../../domain/leaveApproval";
 import type { LeaveApprovalRepository } from "./leaveApprovalRepository";
 import { requireSupabaseClient } from "../supabase/client";
+import { MANAGEMENT_EVIDENCE_BUCKET } from "../../domain/managementLeaveEvidence";
 import { getSchoolTodayISO } from "../../domain/date";
 import { getErrorMessage, isMissingRpcError } from "../../domain/errorMessage";
 
@@ -26,7 +27,7 @@ export class SupabaseLeaveApprovalRepository implements LeaveApprovalRepository 
     const safeLimit = Math.max(1, Math.min(250, Math.trunc(limit)));
     const { data: requests, error: requestError } = await client
       .from("leave_requests")
-      .select("id,teacher_id,date_start,date_end,reason,detail,status,submitted_at,request_code,request_type")
+      .select("id,teacher_id,date_start,date_end,reason,detail,status,submitted_at,request_code,request_type,evidence_path,evidence_uploaded_at")
       .eq("status", "SUBMITTED")
       .order("submitted_at", { ascending: true })
       .limit(safeLimit);
@@ -141,10 +142,22 @@ export class SupabaseLeaveApprovalRepository implements LeaveApprovalRepository 
       detail: row.detail ? String(row.detail) : null,
       status: String(row.status || "SUBMITTED"),
       submittedAt: String(row.submitted_at || ""),
+      evidencePath: String(row.evidence_path || ""),
+      evidenceUploadedAt: String(row.evidence_uploaded_at || ""),
       periods: periodsByRequest.get(String(row.id)) || [],
       slots: slotsByRequest.get(String(row.id)) || [],
       tasks: tasksByRequest.get(String(row.id)) || [],
     }));
+  }
+
+  async getManagementEvidenceUrl(path: string): Promise<string> {
+    if (!path || path.includes("..") || path.startsWith("/")) throw new Error("Path bukti tidak valid.");
+    const client = requireSupabaseClient();
+    const { data, error } = await client.storage
+      .from(MANAGEMENT_EVIDENCE_BUCKET)
+      .createSignedUrl(path, 120); // Private access, expiring in 2 minutes.
+    if (error || !data?.signedUrl) throw new Error(`Tidak dapat membuka bukti izin: ${error?.message || "URL kosong"}`);
+    return data.signedUrl;
   }
 
   async decideRequest(input: {

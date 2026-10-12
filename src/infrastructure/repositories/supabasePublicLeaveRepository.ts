@@ -1,4 +1,5 @@
 import { requireSupabaseClient } from "../supabase/client";
+import { MANAGEMENT_EVIDENCE_BUCKET, evidenceExtension, evidenceUploadMimeMatches } from "../../domain/managementLeaveEvidence";
 import type { PublicLeaveSubmissionPayload } from "../../domain/leaveRequest";
 import type {
   PublicLeaveRepository,
@@ -16,6 +17,8 @@ interface PublicLeaveRpcRow {
   task_upload_token?: string;
   task_upload_expires_at?: string;
   task_count?: number;
+  evidence_path?: string;
+  evidence_upload_token?: string;
 }
 
 export interface ExistingLeaveFreeCorrection {
@@ -24,6 +27,11 @@ export interface ExistingLeaveFreeCorrection {
   status: "SUBMITTED" | "APPROVED";
   recordedPeriods: number[];
   missingFreePeriods: number[];
+}
+
+export interface PendingManagementEvidence extends PublicLeaveSubmitResult {
+  evidencePath: string;
+  evidenceUploadToken: string;
 }
 
 export class SupabasePublicLeaveRepository implements PublicLeaveRepository {
@@ -55,52 +63,64 @@ export class SupabasePublicLeaveRepository implements PublicLeaveRepository {
     return Array.isArray(result.added_periods) ? result.added_periods.map(Number) : [];
   }
 
-  async submit(payload: PublicLeaveSubmissionPayload): Promise<PublicLeaveSubmitResult> {
+  async createEvidenceDraft(payload: PublicLeaveSubmissionPayload, file: File): Promise<PendingManagementEvidence> {
+    const extension = evidenceExtension(file);
     const client = requireSupabaseClient();
-    const { data, error } = await client.rpc("ejadwal_submit_public_leave_request_v3", payload);
-
+    const { data, error } = await client.rpc("ejadwal_submit_public_leave_request_v4", {
+      ...payload, p_evidence_extension: extension,
+    });
     if (error) {
-      const message = error.message || "Gagal mengirim pengajuan izin.";
+      const message = error.message || "Gagal membuat draft izin.";
       if (message.includes("DUPLICATE_ACTIVE_LEAVE_REQUEST")) {
-        throw new Error("Guru ini sudah memiliki pengajuan izin aktif pada tanggal tersebut.");
+        throw new Error("Guru sudah memiliki izin aktif untuk tanggal ini.");
       }
-      if (message.includes("TEACHER_NOT_SCHEDULED_FOR_SLOT")) {
-        throw new Error("Jadwal berubah atau tidak cocok. Muat ulang E-Jadwal lalu coba lagi.");
-      }
-      if (message.includes("FREE_PERIOD_HAS_TEACHING")) {
-        throw new Error("Salah satu JP yang ditandai free ternyata memiliki jadwal mengajar. Muat ulang lalu coba lagi.");
-      }
-      if (message.includes("TEACHING_PERIOD_HAS_NO_SLOT")) {
-        throw new Error("Salah satu JP mengajar tidak memiliki kelas terdampak yang valid.");
-      }
-      if (message.includes("SLOT_ALREADY_HAS_ACTIVE_COVERAGE")) {
-        throw new Error("Salah satu JP sudah memiliki catatan izin/badal aktif.");
-      }
-      if (message.includes("ACADEMIC_EVENT_SUPPRESSES_SLOT")) {
-        throw new Error("Salah satu JP sudah dibatalkan oleh Kalender Akademik.");
-      }
-      if (message.includes("SCHOOL_PERIOD_NOT_ACTIVE")) {
-        throw new Error("Salah satu JP bukan jam sekolah aktif pada tanggal tersebut.");
-      }
-      throw new Error(message);
+      throw new Error(`Gagal membuat draft izin: ${message}`);
     }
-
     const row = (data || {}) as PublicLeaveRpcRow;
-    if (!row.request_id || !row.request_code) {
-      throw new Error("Supabase tidak mengembalikan bukti pengajuan yang lengkap.");
+    if (!row.request_id || !row.request_code || !row.evidence_path || !row.evidence_upload_token) {
+      throw new Error("Supabase tidak mengembalikan akses upload bukti yang lengkap.");
     }
-
-    const periodCount = Number(row.period_count ?? row.slot_count ?? payload.p_periods.length);
     return {
       requestId: row.request_id,
       requestCode: row.request_code,
-      status: row.status || "SUBMITTED",
-      slotCount: periodCount,
+      status: "PENDING_EVIDENCE",
+      slotCount: Number(row.period_count ?? row.slot_count ?? payload.p_periods.length),
       teachingSlotCount: Number(row.teaching_slot_count ?? payload.p_slots.length),
-      freePeriodCount: Number(row.free_period_count ?? payload.p_periods.filter((item) => item.period_type === "FREE").length),
+      freePeriodCount: Number(row.free_period_count ?? payload.p_periods.filter((x) => x.period_type === "FREE").length),
       taskUploadToken: String(row.task_upload_token || ""),
       taskUploadExpiresAt: String(row.task_upload_expires_at || ""),
       taskCount: Number(row.task_count ?? payload.p_tasks.length),
+      evidencePath: row.evidence_path,
+      evidenceUploadToken: row.evidence_upload_token,
     };
+  }
+
+  async uploadEvidence(draft: PendingManagementEvidence, file: File): Promise<void> {
+    if (!evidenceUploadMimeMatches(draft.evidencePath, file)) {
+      throw new Error("Format bukti harus sama dengan file yang pertama kali dipilih untuk draft ini.");
+    }
+    const { error } = await requireSupabaseClient().storage
+      .from(MANAGEMENT_EVIDENCE_BUCKET)
+      .upload(draft.evidencePath, file, { contentType: file.type, upsert: false });
+    if (error && !/already exists|duplicate/i.test(error.message)) {
+      throw new Error(`Upload bukti izin gagal: ${error.message}`);
+    }
+    // If the same path already exists (e.g. previous upload succeeded but
+    // finalization timed out), finalize verifies the actual private object.
+  }
+
+  async finalizeEvidence(draft: PendingManagementEvidence): Promise<void> {
+    const { error, data } = await requireSupabaseClient().rpc("ejadwal_finalize_leave_evidence_v1", {
+      p_leave_request_id: draft.requestId,
+      p_evidence_upload_token: draft.evidenceUploadToken,
+    });
+    if (error) throw new Error(`Bukti belum dapat diverifikasi: ${error.message}`);
+    if ((data as {status?: string}|null)?.status !== "SUBMITTED") {
+      throw new Error("Pengajuan belum berstatus SUBMITTED. Bukti masih menunggu verifikasi sistem.");
+    }
+  }
+
+  async submit(_payload: PublicLeaveSubmissionPayload): Promise<PublicLeaveSubmitResult> {
+    throw new Error("Pengajuan izin membutuhkan bukti dari manajemen. Gunakan alur upload bukti.");
   }
 }

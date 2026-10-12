@@ -125,6 +125,7 @@ export type ActivePage =
   | "approval-izin"
   | "action-center"
   | "management-analytics"
+  | "teacher-statistics"
   | "jadwal-lengkap"
   | "jadwal-kelas"
   | "jadwal-ruangan"

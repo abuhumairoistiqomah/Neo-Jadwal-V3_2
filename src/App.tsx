@@ -28,6 +28,7 @@ import { IncidentalScheduleAdmin } from "./components/IncidentalScheduleAdmin";
 import { ScheduleControlCenter } from "./components/ScheduleControlCenter";
 import { OperationalActionCenter } from "./components/OperationalActionCenter";
 import { ManagementAnalytics } from "./components/ManagementAnalytics";
+import { TeacherIndividualStatistics } from "./components/TeacherIndividualStatistics";
 import { 
   ShieldAlert, ShieldCheck, Database, LogIn, LogOut, 
   HelpCircle, Wifi, WifiOff, RefreshCw, Layers,
@@ -396,6 +397,7 @@ export default function App() {
     { id: "approval-izin", label: "Persetujuan Izin", icon: ShieldCheck, adminOnly: true },
     { id: "action-center", label: "Action Center", icon: BellRing, adminOnly: true },
     { id: "management-analytics", label: "Management Analytics", icon: BarChart3, adminOnly: true },
+    { id: "teacher-statistics", label: "Statistik Individu Guru", icon: BarChart2, adminOnly: true },
     { id: "tabel-jam-kosong", label: "Tabel Jam Kosong", icon: Table, adminOnly: true },
     { id: "jam-kosong-semua", label: "Jam Kosong Semua", icon: Users, adminOnly: true },
     { id: "rekap-guru", label: "Rekap Guru (Admin)", icon: ClipboardList, adminOnly: true },
@@ -893,6 +895,22 @@ export default function App() {
             {activePage === "management-analytics" && (
               isAdmin ? (
                 <ManagementAnalytics onBack={() => setActivePage("dashboard")} />
+              ) : (
+                <AdminOnlyFallback onBack={() => setActivePage("dashboard")} />
+              )
+            )}
+
+            {activePage === "teacher-statistics" && (
+              isAdmin ? (
+                <TeacherIndividualStatistics
+                  teachers={teachers}
+                  schedules={schedules}
+                  incidentals={jadwalInsidental}
+                  academicEvents={kalenderAkademik}
+                  logs={logs}
+                  initialTeacher={selectedTeacher}
+                  onBack={() => setActivePage("dashboard")}
+                />
               ) : (
                 <AdminOnlyFallback onBack={() => setActivePage("dashboard")} />
               )

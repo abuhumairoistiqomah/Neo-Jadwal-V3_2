@@ -1,3 +1,11 @@
+## RC3.4.9.5 – Statistik Alasan Izin Lengkap
+
+Lihat `TRACE_V3_14_6_RC3_4_9_5_ALL_LEAVE_REASONS.md` untuk perubahan laporan statistik individu.
+
+# V3.14.6 RC3.4.9.2 — Bukti Izin Manajemen
+
+Mandatory private screenshot upload before `SUBMITTED`; staging migration `202610120006_v3_14_6_management_leave_evidence.sql` required. See `TRACE_V3_14_6_RC3_4_9_2_MANAGEMENT_LEAVE_EVIDENCE.md`.
+
 # V3.14.6 RC3.4.8.3.1 — Guest refresh regression test hotfix
 
 Test-only fix based on RC3.4.8.3: `teacher-owned-task-admin-runtime.test.ts` now checks the `if (!isAdmin) { ... }` guest refresh effect and Jakarta date-rollover contact redaction instead of matching obsolete one-line syntax. **No App.tsx, runtime, UI, SQL, or data model change.** The RC3.4.8.3 migration `202610120005_v3_14_6_dated_public_wa_contacts.sql` remains a prerequisite; there is no new migration. See `TRACE_V3_14_6_RC3_4_8_3_1_TEST_REGRESSION.md`.
@@ -187,3 +195,12 @@ coverage slot provides its absent/substitute teacher WhatsApp contact, expiring
 by the following Jakarta school date. Apply migration
 `202610120005_v3_14_6_dated_public_wa_contacts.sql` after `202610120004`.
 See `TRACE_V3_14_6_RC3_4_8_3_DATED_PUBLIC_WA.md` for privacy, tests and release gate.
+
+## V3.14.6 RC3.4.9.1 — Syaikh Ali: Flexible Dated Import
+
+Overrides the **automatic A/B rotation** proposed in RC3.4.9. Admin now chooses
+actual sessions individually by date/class/JP, using optional A/B reference
+TSVs (A/B/Skip per slot) or pasting the familiar 14-column dated TSV directly.
+No automatic week parity or catch-up; no new SQL. The compact Log Izin & WA
+buttons from RC3.4.9 remain in this release.
+See `TRACE_V3_14_6_RC3_4_9_1_ALI_FLEXIBLE_DATED_IMPORT.md`.

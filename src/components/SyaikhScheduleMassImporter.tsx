@@ -21,6 +21,7 @@ import {
 import { ScheduleAdminRepository, type ScheduleAdminContext } from "../infrastructure/repositories/scheduleAdminRepository";
 import { getCurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
 import { explainSyaikhPublishError, isSyaikhTeacherConflictRequired } from "../domain/syaikhRotationPublishErrors";
+import { SyaikhAlternatingLegacyImporter } from "./SyaikhAlternatingLegacyImporter";
 
 interface Props {
   schedules: ScheduleItem[];
@@ -53,6 +54,7 @@ export const SyaikhScheduleMassImporter: React.FC<Props> = ({ schedules, inciden
   const [subjectMatcher, setSubjectMatcher] = useState("NATIVE ARABIC");
   const [annotateSpecialNote, setAnnotateSpecialNote] = useState(false);
   const [pasteText, setPasteText] = useState("");
+  const [alternatingMode, setAlternatingMode] = useState(false);
   const [workbookSheets, setWorkbookSheets] = useState<SheetMatrix[]>([]);
   const [selectedSheet, setSelectedSheet] = useState("");
   const [parsedSource, setParsedSource] = useState<ParsedSource | null>(null);
@@ -211,6 +213,8 @@ export const SyaikhScheduleMassImporter: React.FC<Props> = ({ schedules, inciden
     return <div className="min-h-[300px] flex items-center justify-center text-slate-500"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Membaca Master Data...</div>;
   }
 
+  if (alternatingMode) return <SyaikhAlternatingLegacyImporter schedules={schedules} incidentals={incidentals} onBack={() => setAlternatingMode(false)} onPublished={onPublished} />;
+
   const activeTeachers = (context?.teachers || []).filter((teacher) => teacher.is_active !== false);
   const prioritizedTeachers = [...activeTeachers].sort((a, b) => {
     const aS = /syaikh|syaikhoh/i.test(`${a.full_name} ${a.short_name || ""}`) ? 0 : 1;
@@ -227,6 +231,8 @@ export const SyaikhScheduleMassImporter: React.FC<Props> = ({ schedules, inciden
 
       {error && <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800">{error}</div>}
       {message && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{message}</div>}
+
+      <button type="button" onClick={() => setAlternatingMode(true)} className="w-full rounded-2xl border-2 border-violet-200 bg-violet-50 p-4 text-left text-sm font-bold text-violet-800 hover:bg-violet-100">↔ Mode fleksibel: Import Syaikh Ali dari TSV bertanggal (A/B opsional, tanpa rotasi otomatis)</button>
 
       <section className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
         <label className="group cursor-pointer rounded-3xl border-2 border-dashed border-violet-200 bg-violet-50/60 p-6 hover:border-violet-400">

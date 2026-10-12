@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  ShieldCheck as ShieldCheckIcon,
   ArrowLeft,
   CalendarDays,
   CheckCircle2,
@@ -11,6 +12,7 @@ import {
   Paperclip,
   UploadCloud,
   Link2,
+  MessageCircle,
 } from "lucide-react";
 import type {
   JadwalInsidentalItem,
@@ -27,8 +29,9 @@ import {
 import { syncTaskResourcesWithText } from "../domain/taskResources";
 import { saveStoredTaskAccess } from "../domain/taskRecovery";
 import { uploadPublicLeaveTaskFile, type PublicLeaveTaskUploadResult } from "../infrastructure/drive/publicLeaveTaskDriveBridge";
-import { SupabasePublicLeaveRepository, type ExistingLeaveFreeCorrection } from "../infrastructure/repositories/supabasePublicLeaveRepository";
+import { SupabasePublicLeaveRepository, type ExistingLeaveFreeCorrection, type PendingManagementEvidence } from "../infrastructure/repositories/supabasePublicLeaveRepository";
 import { isSupabaseConfigured } from "../infrastructure/supabase/client";
+import { evidenceExtension } from "../domain/managementLeaveEvidence";
 import { getCurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
 
 interface LeaveRequestFormProps {
@@ -103,6 +106,9 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
   const [pendingFilesByPeriod, setPendingFilesByPeriod] = useState<Record<number, File[]>>({});
   const [uploadingPeriod, setUploadingPeriod] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState("");
+  const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
+  const [evidenceModalOpen, setEvidenceModalOpen] = useState(false);
+  const [pendingEvidenceDraft, setPendingEvidenceDraft] = useState<PendingManagementEvidence | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [freeCorrection, setFreeCorrection] = useState<ExistingLeaveFreeCorrection | null>(null);
@@ -223,17 +229,84 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
     }
   };
 
+  const completeEvidenceSubmission = async (draft: PendingManagementEvidence, file: File) => {
+    await repository.uploadEvidence(draft, file);
+    await repository.finalizeEvidence(draft);
+    setPendingEvidenceDraft(null);
+    saveStoredTaskAccess({
+      requestCode: draft.requestCode,
+      teacherName,
+      scheduleDate,
+      uploadToken: draft.taskUploadToken,
+      expiresAt: draft.taskUploadExpiresAt,
+    });
+    // Existing teacher-owned learning task uploads remain separate from
+    // the private management authorization screenshot.
+    const autoUploaded: Record<number, PublicLeaveTaskUploadResult[]> = {};
+    const uploadFailures: string[] = [];
+    for (const [periodKey, files] of Object.entries(pendingFilesByPeriod) as Array<[string, File[]]>) {
+      const period = Number(periodKey);
+      for (const taskFile of files || []) {
+        try {
+          const uploaded = await uploadPublicLeaveTaskFile({
+            apiUrl: driveBridgeUrl,
+            requestCode: draft.requestCode,
+            uploadToken: draft.taskUploadToken,
+            period, scheduleDate, file: taskFile,
+          });
+          autoUploaded[period] = [...(autoUploaded[period] || []), uploaded];
+        } catch (uploadErr) {
+          uploadFailures.push(`JP ${period} • ${taskFile.name}: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
+        }
+      }
+    }
+    setUploadedByPeriod(autoUploaded);
+    setUploadError(uploadFailures.length > 0
+      ? `Izin sudah SUBMITTED, tetapi ${uploadFailures.length} lampiran tugas gagal. Upload ulang pada panel bawah. ${uploadFailures.join(" | ")}`
+      : "");
+    setPendingFilesByPeriod({});
+    setSuccess({
+      requestId: draft.requestId,
+      requestCode: draft.requestCode,
+      slotCount: draft.slotCount,
+      teachingSlotCount: draft.teachingSlotCount,
+      freePeriodCount: draft.freePeriodCount,
+      taskUploadToken: draft.taskUploadToken,
+      taskUploadExpiresAt: draft.taskUploadExpiresAt,
+      scheduleDate,
+      teachingPeriods: selectedSlots
+        .filter((slot) => slot.periodType === "TEACHING" && slot.period > 0)
+        .map((slot) => ({ period: slot.period, classCode: slot.classCode, subject: slot.subject })),
+    });
+    setEvidenceFile(null);
+    setReason("");
+    setDetail("");
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError("");
-    setSuccess(null);
-
-    if (!isSupabaseConfigured) {
-      setError("Supabase belum dikonfigurasi di .env.local. Pengajuan belum dapat dikirim.");
+    if (!evidenceFile) {
+      setEvidenceModalOpen(true); // Button remains clickable, but no submission.
       return;
     }
-
     try {
+      evidenceExtension(evidenceFile);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    if (!isSupabaseConfigured) {
+      setError("Supabase belum dikonfigurasi. Pengajuan tidak dikirim.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      if (pendingEvidenceDraft) {
+        // Retry on the original draft: never create a second leave request.
+        await completeEvidenceSubmission(pendingEvidenceDraft, evidenceFile);
+        return;
+      }
       const tasks = selectedSlots
         .filter((slot) => slot.periodType === "TEACHING" && slot.period > 0)
         .map((slot) => {
@@ -244,73 +317,16 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
           return { period: slot.period, description, resources };
         });
       const payload = buildPublicLeaveSubmission({
-        teacherName,
-        scheduleDate,
-        requestType,
-        reason,
-        detail,
-        slots: selectedSlots,
-        tasks,
+        teacherName, scheduleDate, requestType, reason, detail,
+        slots: selectedSlots, tasks,
       });
-      setSubmitting(true);
-      const result = await repository.submit(payload);
-      saveStoredTaskAccess({
-        requestCode: result.requestCode,
-        teacherName,
-        scheduleDate,
-        uploadToken: result.taskUploadToken,
-        expiresAt: result.taskUploadExpiresAt,
-      });
-
-      // The leave request must exist before a secure upload capability can be
-      // issued. Files are selected on the same form, then uploaded automatically
-      // immediately after SUBMITTED is created. A Drive failure never erases the
-      // already-valid leave request; the success screen offers manual retry.
-      const autoUploaded: Record<number, PublicLeaveTaskUploadResult[]> = {};
-      const uploadFailures: string[] = [];
-      for (const [periodKey, files] of Object.entries(pendingFilesByPeriod) as Array<[string, File[]]>) {
-        const period = Number(periodKey);
-        for (const file of files || []) {
-          try {
-            const uploaded = await uploadPublicLeaveTaskFile({
-              apiUrl: driveBridgeUrl,
-              requestCode: result.requestCode,
-              uploadToken: result.taskUploadToken,
-              period,
-              scheduleDate,
-              file,
-            });
-            autoUploaded[period] = [...(autoUploaded[period] || []), uploaded];
-          } catch (uploadErr) {
-            uploadFailures.push(`JP ${period} • ${file.name}: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
-          }
-        }
-      }
-      setUploadedByPeriod(autoUploaded);
-      setUploadError(uploadFailures.length > 0
-        ? `Pengajuan izin sudah tersimpan, tetapi ${uploadFailures.length} file gagal di-upload. Pilih ulang file pada panel di bawah untuk retry. ${uploadFailures.join(" | ")}`
-        : "");
-      setPendingFilesByPeriod({});
-      setSuccess({
-        requestId: result.requestId,
-        requestCode: result.requestCode,
-        slotCount: result.slotCount,
-        teachingSlotCount: result.teachingSlotCount,
-        freePeriodCount: result.freePeriodCount,
-        taskUploadToken: result.taskUploadToken,
-        taskUploadExpiresAt: result.taskUploadExpiresAt,
-        scheduleDate,
-        teachingPeriods: selectedSlots
-          .filter((slot) => slot.periodType === "TEACHING" && slot.period > 0)
-          .map((slot) => ({ period: slot.period, classCode: slot.classCode, subject: slot.subject })),
-      });
-      setReason("");
-      setDetail("");
+      const draft = await repository.createEvidenceDraft(payload, evidenceFile);
+      setPendingEvidenceDraft(draft);
+      await completeEvidenceSubmission(draft, evidenceFile);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
       if (message.includes("sudah memiliki pengajuan izin aktif")) {
-        // Corrections to existing leave are staff-only, not public resubmissions.
         try {
           const auth = await getCurrentUserContext();
           if (auth?.roles.some((role) => role === "ADMIN" || role === "WAKASEK")) {
@@ -318,7 +334,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
             setFreeCorrection(existing);
           }
         } catch (correctionError) {
-          setError(`${message} Koreksi JP Free membutuhkan login ADMIN/WAKASEK dan migration RC3.4.6. ${correctionError instanceof Error ? correctionError.message : ""}`);
+          setError(`${message} Koreksi JP Free membutuhkan login ADMIN/WAKASEK. ${correctionError instanceof Error ? correctionError.message : ""}`);
         }
       }
     } finally {
@@ -330,6 +346,9 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
     setSuccess(null);
     setError("");
     setUploadError("");
+    setEvidenceFile(null);
+    setPendingEvidenceDraft(null);
+    setEvidenceModalOpen(false);
     setUploadedByPeriod({});
     setPendingFilesByPeriod({});
     setTaskTextByPeriod({});
@@ -363,6 +382,15 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
 
   return (
     <div className="space-y-6">
+      {evidenceModalOpen && (
+        <div role="presentation" className="fixed inset-0 z-[100] bg-slate-950/60 flex items-center justify-center p-4">
+          <div role="alertdialog" aria-modal="true" aria-labelledby="required-evidence-title" aria-describedby="required-evidence-description" className="w-full max-w-md rounded-2xl bg-white shadow-2xl p-6 space-y-3">
+            <div className="flex gap-2 items-center text-red-700 font-black" id="required-evidence-title"><AlertTriangle className="w-5 h-5" /> Bukti izin wajib dilampirkan</div>
+            <p id="required-evidence-description" className="text-sm text-slate-700">Harus upload bukti izin dari manajemen. Pengajuan belum dikirim dan tidak akan masuk antrean persetujuan sampai screenshot berhasil diunggah.</p>
+            <button type="button" autoFocus onClick={() => setEvidenceModalOpen(false)} className="w-full rounded-xl bg-emerald-600 text-white py-2.5 font-bold">Mengerti, saya akan upload</button>
+          </div>
+        </div>
+      )}
       <div className="flex items-start gap-3">
         <button
           type="button"
@@ -396,7 +424,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
             <CheckCircle2 className="w-8 h-8" />
           </div>
           <h3 className="text-xl font-black text-slate-900 mt-4">Pengajuan berhasil dikirim</h3>
-          <p className="text-sm text-slate-500 mt-1">Status awal: <strong>SUBMITTED</strong> — belum otomatis menjadi izin yang disetujui.</p>
+          <p className="text-sm text-slate-500 mt-1">Bukti izin berhasil diterima secara privat. Status: <strong>SUBMITTED</strong> — menunggu pemeriksaan Wakakur.</p>
           <div className="mt-5 inline-flex flex-col items-center rounded-2xl border border-slate-200 bg-slate-50 px-6 py-4">
             <span className="text-[11px] uppercase tracking-widest font-bold text-slate-400">Kode Pengajuan</span>
             <strong className="font-mono text-xl text-slate-900 mt-1 select-all">{success.requestCode}</strong>
@@ -531,6 +559,46 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
                 placeholder="Keterangan tambahan tentang izin bila diperlukan."
                 className="mt-2 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
               />
+            </div>
+
+            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 space-y-3">
+              <div className="flex items-center gap-2 font-black text-amber-950 text-sm">
+                <ShieldCheckIcon /> Bukti Izin dari Manajemen <span className="text-red-600">(wajib)</span>
+              </div>
+              <p className="text-xs text-amber-900">Upload screenshot WhatsApp dari manajemen yang menyatakan izin diberikan. JPG, PNG, atau WEBP (maksimal 5 MB). Bukti disimpan privat dan hanya petugas berwenang yang dapat melihatnya.</p>
+              <a
+                href="https://wa.me/6281325245959?text=Assalamu%27alaikum%2C%20saya%20ingin%20meminta%20persetujuan%20izin%20kepada%20manajemen."
+                target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-800 hover:bg-emerald-100"
+              >
+                <MessageCircle className="h-4 w-4"/> Hubungi Manajemen via WA
+              </a>
+              <p className="text-[11px] text-amber-900">Nomor manajemen: +62 813-2524-5959. Dapatkan persetujuan terlebih dahulu, lalu unggah screenshot-nya di bawah.</p>
+              <label className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-amber-300 text-sm font-bold text-amber-900 cursor-pointer hover:bg-amber-100">
+                <UploadCloud className="w-4 h-4" /> {evidenceFile ? "Ganti Bukti Izin" : "Pilih Screenshot Persetujuan"}
+                <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) {
+                      try {
+                        evidenceExtension(file);
+                        setEvidenceFile(file);
+                        setError("");
+                        setEvidenceModalOpen(false);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : String(err));
+                      }
+                    }
+                    event.currentTarget.value = "";
+                  }} />
+              </label>
+              {evidenceFile && <p className="text-xs text-emerald-800 font-semibold break-all">✓ {evidenceFile.name} ({Math.ceil(evidenceFile.size / 1024)} KB)</p>}
+              {pendingEvidenceDraft && (
+                <div className="rounded-xl border border-amber-400 bg-white p-3 text-xs text-amber-900">
+                  <strong>Menunggu Bukti — {pendingEvidenceDraft.requestCode}</strong>
+                  <p className="mt-1">Draft sudah tercatat, tetapi belum masuk Persetujuan Izin. Klik Kirim lagi untuk mencoba upload/verifikasi ulang (bukan membuat izin kedua). Jangan tutup tab sebelum selesai.</p>
+                </div>
+              )}
             </div>
 
             <div className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-3">
@@ -685,7 +753,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
               >
                 <Send className="w-4 h-4" /> {submitting ? "Mengirim Izin & Tugas..." : "Kirim Pengajuan Izin"}
               </button>
-              <p className="text-[10px] text-slate-400 text-center mt-2">JP free tersimpan sebagai statistik ketidakhadiran dan tidak membuat kebutuhan badal. Semua pengajuan tetap SUBMITTED sampai disetujui Wakakur.</p>
+              <p className="text-[10px] text-slate-400 text-center mt-2">Tanpa bukti manajemen, izin tidak masuk antrean approval. JP free hanya untuk statistik dan tidak menghasilkan badal.</p>
             </div>
           </div>
         </form>

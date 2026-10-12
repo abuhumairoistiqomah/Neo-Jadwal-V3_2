@@ -355,8 +355,8 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                 </div>
 
                 {/* Desktop view table for each group */}
-                <div className="hidden md:block overflow-hidden rounded-xl border border-gray-100">
-                  <table className="w-full text-left border-collapse">
+                <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-100">
+                  <table className="w-full min-w-[1100px] text-left border-collapse">
                     <thead>
                       <tr className="bg-gray-50/50 text-[11px] font-bold text-gray-400 uppercase border-b border-gray-100">
                         <th className="p-3 w-16 text-center">Jam</th>
@@ -366,7 +366,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                         <th className="p-3">Kelas</th>
                         <th className="p-3">Tugas / Link</th>
                         <th className="p-3">Guru Pengganti (Inval)</th>
-                        <th className="p-3 text-center">Aksi</th>
+                        <th className="sticky right-0 z-10 min-w-[168px] w-[168px] p-2 text-center bg-slate-50 shadow-[-4px_0_8px_-6px_#64748b]">Aksi</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
@@ -395,28 +395,28 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                               {log.guru_pengganti}
                             </span>
                           </td>
-                          <td className="p-3 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
-                              {/* Individual WA Reminder Button */}
+                          <td className="sticky right-0 z-10 min-w-[168px] w-[168px] p-2 bg-white text-center shadow-[-4px_0_8px_-6px_#64748b]">
+                            <div className="flex flex-nowrap items-center justify-center gap-1">
+                              {/* Compact icon actions: keep Edit/Delete reachable on narrow laptops */}
                               <button
                                 id={`remind-indiv-${log.id}`}
                                 onClick={() => handleCopyIndividualReminder(log)}
-                                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 border whitespace-nowrap ${
+                                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-all ${
                                   copiedIndividualId === log.id
                                     ? "bg-emerald-600 text-white border-emerald-700"
                                     : "bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200/80 hover:border-amber-300"
                                 }`}
-                                title="Salin pesan pengingat WA individual"
+                                title="Salin pengingat WA individual" aria-label={`Salin pengingat WA ${log.guru_pengganti}`}
                               >
                                 {copiedIndividualId === log.id ? (
                                   <>
                                     <Check className="w-3.5 h-3.5" />
-                                    <span>Pengingat Disalin</span>
+                                    <span className="sr-only">Pengingat Disalin</span>
                                   </>
                                 ) : (
                                   <>
                                     <Bell className="w-3.5 h-3.5 text-amber-600" />
-                                    <span>Ingatkan Individu</span>
+                                    <span className="sr-only">Ingatkan Individu</span>
                                   </>
                                 )}
                               </button>
@@ -424,11 +424,11 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                               {teachers.some((item) => item.nama.trim().toLocaleLowerCase("id-ID") === log.guru_pengganti.trim().toLocaleLowerCase("id-ID") && Boolean(item.whatsapp_e164)) && (
                                 <button
                                   onClick={() => handleOpenWhatsApp(log)}
-                                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 border whitespace-nowrap bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200"
-                                  title="Buka WhatsApp dengan pesan badal terisi otomatis"
+                                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
+                                  title="Buka WhatsApp dengan pesan badal terisi otomatis" aria-label={`Buka WhatsApp ${log.guru_pengganti}`}
                                 >
                                   <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-                                  <span>Buka WhatsApp</span>
+                                  <span className="sr-only">Buka WhatsApp</span>
                                 </button>
                               )}
 
@@ -436,18 +436,18 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                                 <button
                                   id={`edit-badal-${log.id}`}
                                   onClick={() => openEditor(log)}
-                                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
-                                  title="Ganti guru badal tanpa menghapus catatan atau tugas"
-                                ><Pencil className="w-3.5 h-3.5" /> Edit Badal</button>
+                                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
+                                  title="Ganti guru badal tanpa menghapus catatan atau tugas" aria-label={`Edit badal ${log.guru_pengganti}`}
+                                ><Pencil className="w-4 h-4" /><span className="sr-only">Edit Badal</span></button>
                               )}
                               {onDeleteLog && (
                                 <button
                                   id={`delete-log-${log.id}`}
                                   onClick={() => onDeleteLog(log.id)}
-                                  className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                  title="Batalkan log (soft-delete; audit tetap tersimpan)"
+                                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-100 bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+                                  title="Batalkan log (soft-delete; audit tetap tersimpan)" aria-label={`Batalkan log badal ${log.id}`}
                                 >
-                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <Trash2 className="w-4 h-4" />
                                 </button>
                               )}
                             </div>
@@ -471,21 +471,18 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                           <span className="text-[10px] text-gray-400 italic">Alasan: {log.alasan}</span>
                         </div>
 
-                        {onReplaceSubstitute && (
-                          <button id={`edit-badal-mob-${log.id}`} onClick={() => openEditor(log)}
-                            className="flex items-center gap-1 px-2 py-1 text-xs font-bold text-indigo-700 bg-indigo-50 rounded-lg">
-                            <Pencil className="w-3.5 h-3.5" /> Edit Badal
-                          </button>
-                        )}
-                        {onDeleteLog && (
-                          <button
-                            id={`delete-log-mob-${log.id}`}
-                            onClick={() => onDeleteLog(log.id)}
-                            className="p-1 text-gray-300 hover:text-red-500 rounded"
-                          >
+                        {(onReplaceSubstitute || onDeleteLog) && <div className="flex shrink-0 items-center gap-1">
+                          {onReplaceSubstitute && <button id={`edit-badal-mob-${log.id}`} onClick={() => openEditor(log)}
+                            title="Edit Badal" aria-label={`Edit badal ${log.guru_pengganti}`}
+                            className="flex h-10 w-10 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700">
+                            <Pencil className="w-4 h-4" />
+                          </button>}
+                          {onDeleteLog && <button id={`delete-log-mob-${log.id}`} onClick={() => onDeleteLog(log.id)}
+                            title="Batalkan log" aria-label={`Batalkan log badal ${log.id}`}
+                            className="flex h-10 w-10 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-600">
                             <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                          </button>}
+                        </div>}
                       </div>
 
                       {log.tugas && (
@@ -509,7 +506,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                       </div>
 
                       {/* Mobile Individual Reminder Button */}
-                      <div className="pt-2 border-t border-gray-100 flex justify-end">
+                      <div className="pt-2 border-t border-gray-100 flex flex-col sm:flex-row justify-end gap-2">
                         <button
                           id={`remind-indiv-mob-${log.id}`}
                           onClick={() => handleCopyIndividualReminder(log)}

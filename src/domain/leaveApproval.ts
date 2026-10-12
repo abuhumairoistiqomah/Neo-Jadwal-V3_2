@@ -40,6 +40,8 @@ export interface LeaveReviewRequest {
   detail: string | null;
   status: LeaveWorkflowStatus;
   submittedAt: string;
+  evidencePath?: string;
+  evidenceUploadedAt?: string;
   periods: LeaveReviewPeriod[];
   slots: LeaveReviewSlot[];
   tasks: LeaveReviewTask[];

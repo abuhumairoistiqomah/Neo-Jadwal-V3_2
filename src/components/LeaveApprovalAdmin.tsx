@@ -121,6 +121,21 @@ export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({ teachers
     return () => window.clearInterval(timer);
   }, [isStaff, loadData]);
 
+  const openManagementEvidence = async (path: string) => {
+    // Reserve a tab within the user click; browsers often block window.open
+    // after awaiting a signed URL.
+    const tab = window.open("about:blank", "_blank");
+    if (tab) tab.opener = null;
+    try {
+      const url = await repository.getManagementEvidenceUrl(path);
+      if (tab && !tab.closed) tab.location.replace(url);
+      else window.open(url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      if (tab && !tab.closed) tab.close();
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const handleLogin = async () => {
     setLoading(true);
     setError("");
@@ -352,6 +367,15 @@ export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({ teachers
                         <div className="text-sm text-slate-600 mt-1">{formatDate(request.scheduleDate)} • {request.reason}</div>
                         {request.detail && <div className="text-xs text-slate-500 mt-1">Catatan guru: {request.detail}</div>}
                         <div className="text-[11px] text-slate-400 mt-2">Diajukan {formatSubmittedAt(request.submittedAt)}</div>
+                        {request.evidencePath && request.evidenceUploadedAt ? (
+                          <button type="button" onClick={() => void openManagementEvidence(request.evidencePath)}
+                            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-800">
+                            <Paperclip className="w-3.5 h-3.5" /> Lihat Bukti Izin Manajemen
+                          </button>
+                        ) : (
+                          <div className="text-[11px] text-amber-700 font-semibold mt-2">Pengajuan lama — tidak ada bukti digital tercatat. Periksa manual sebelum memutuskan.</div>
+                        )}
+                        <p className="text-[10px] text-slate-400 mt-1">Screenshot adalah lampiran; keasliannya tetap harus diverifikasi oleh petugas.</p>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-2 gap-2 text-center min-w-[240px]">
                         <div className="rounded-xl bg-slate-50 p-2"><div className="text-lg font-black">{summary.periodCount}</div><div className="text-[10px] text-slate-500">JP IZIN</div></div>
