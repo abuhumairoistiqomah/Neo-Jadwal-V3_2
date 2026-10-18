@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import type { JadwalInsidentalItem, KalenderAkademikItem, LogIzinItem } from "../domain/models";
 import { buildTeacherWeeklyView, teacherWeekDays, type TeacherWeekRow, type TeacherWeeklyMode } from "../domain/schedule/teacherWeeklyView";
 import { getSchoolTodayISO } from "../domain/date";
+import { getTeacherWeekSlotAnnotations } from "../domain/schedule/teacherWeeklyPresentation";
 import { isGrade1Or2 } from "../domain/class";
 import { Teacher, ScheduleItem, MasterRuanganItem, getRoomDisplayName, normalizeDay, checkIsITBA, isITBACoreSubject, isAlQuranOrTahsin } from "../types";
 import { ArrowLeft, BookOpen, AlertCircle, HelpCircle, Search, X, Clock, User, Calendar, GraduationCap, Users, Download, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
@@ -55,7 +56,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
     isSlotGabung: boolean;
     isSlotBergantian: boolean;
     isConflict: boolean;
-    items: ScheduleItem[];
+    items: TeacherWeekRow[];
   } | null>(null);
 
   // Filter teachers for search inside this view
@@ -83,7 +84,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
   const totalJP = uniqueSlots.size;
 
   // Map schedules to 2D lookup [Hari][Jam_ke] -> ScheduleItem[]
-  const scheduleMap: Record<string, Record<number, ScheduleItem[]>> = {};
+  const scheduleMap: Record<string, Record<number, TeacherWeekRow[]>> = {};
   HARI_LIST.forEach(hari => {
     scheduleMap[hari] = {};
   });
@@ -96,6 +97,9 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
       scheduleMap[normH][item.jam_ke].push(item);
     }
   });
+  const selectedDetailAnnotations = selectedDetail
+    ? getTeacherWeekSlotAnnotations(selectedDetail.items, scheduleMode)
+    : null;
 
   // V3.14.5: Export the existing Jadwal Lengkap grid (not a second teacher
   // timetable). The staging clone is attached off-screen, never printed, and
@@ -417,6 +421,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                           const displayMapel = uniqueMapels.join(" & ");
                           const displayKelas = uniqueKelas.join(" & ");
                           const firstItem = items[0];
+                          const annotations = getTeacherWeekSlotAnnotations(items, scheduleMode);
 
                           let cellClasses = "";
                           let badge = null;
@@ -494,8 +499,9 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                               title="Klik untuk detail pelajaran & pengampu"
                             >
                               <div data-teacher-export-subject="true" data-export-expand-text="true" className="font-extrabold text-xs sm:text-sm leading-tight">{displayMapel}</div>
-                              {scheduleMode === "EFFECTIVE" && [...new Set(items.map((item) => (item as TeacherWeekRow).weekStatus))].map((status) => status !== "NORMAL" && <div key={status} className="mt-1 text-[9px] font-black uppercase">{status === "KALENDER" ? "KALENDER / KBM BATAL" : status === "TUGAS_RESMI" ? "TUGAS SEKOLAH — TIDAK MENGAJAR" : status}</div>)}
-                              {scheduleMode === "EFFECTIVE" && items.some((item) => (item as TeacherWeekRow).weekDetail) && <div className="text-[9px] leading-tight mt-1">{items.map((item) => (item as TeacherWeekRow).weekDetail).filter(Boolean).join(" • ")}</div>}
+                              {annotations.statusLabels.map((status) => <div key={status} className="mt-1 text-[9px] font-black uppercase break-words">{status}</div>)}
+                              {annotations.operationalDetails.map((detail) => <div key={detail} className="text-[9px] leading-tight mt-1 break-words">{detail}</div>)}
+                              {annotations.specialNotes.map((note) => <div key={note} className="text-[9px] leading-tight mt-1 break-words">Keterangan Khusus: {note}</div>)}
                               <div data-teacher-export-class="true" data-export-expand-text="true" className="text-xs font-bold mt-1 opacity-90">Kelas {displayKelas}</div>
                               <div className="text-[10px] mt-0.5 opacity-75">
                                 {(() => {
@@ -618,6 +624,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                             const displayMapel = uniqueMapels.join(" & ");
                             const displayKelas = uniqueKelas.join(" & ");
                             const firstItem = items[0];
+                            const annotations = getTeacherWeekSlotAnnotations(items, scheduleMode);
 
                             let bgClasses = "";
                             let badge = null;
@@ -654,9 +661,20 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                               bgClasses = "bg-sky-50 border-sky-100 text-sky-900";
                               badge = (
                                 <span className="text-[8px] bg-sky-100 text-sky-800 font-bold px-1 py-0.5 rounded uppercase tracking-wider">
-                                  <T>{"Reguler (1 JP)"}</T>
+                                  {annotations.statusLabels.length ? "1 JP" : <T>{"Reguler (1 JP)"}</T>}
                                 </span>
                               );
+                            }
+
+                            // The mobile card must reflect the same effective-state
+                            // hierarchy as the desktop timetable, not just its base
+                            // regular/team-teaching category.
+                            if (scheduleMode === "EFFECTIVE") {
+                              if (items.some((item) => (item as TeacherWeekRow).weekStatus === "TUGAS_RESMI")) bgClasses = "bg-rose-100 text-red-900 border-red-300 border-l-4 border-l-red-600";
+                              else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "IZIN")) bgClasses = "bg-rose-50 text-rose-900 border-rose-200 border-l-2 border-l-rose-500";
+                              else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "KALENDER")) bgClasses = "bg-red-50 text-red-800 border-red-200 border-l-2 border-l-red-400";
+                              else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "BADAL")) bgClasses = "bg-amber-50 text-amber-900 border-amber-200 border-l-2 border-l-amber-500";
+                              else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "INSIDENTAL")) bgClasses = "bg-indigo-50 text-indigo-900 border-indigo-200 border-l-2 border-l-indigo-500";
                             }
 
                             return (
@@ -685,7 +703,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                                 className={`p-3 rounded-lg border flex items-center justify-between gap-3 cursor-pointer hover:bg-slate-100/95 hover:ring-2 hover:ring-blue-400/30 transition-all active:scale-[0.98] ${bgClasses}`}
                                 title="Klik untuk detail pelajaran & pengampu"
                               >
-                                <div>
+                                <div className="min-w-0 flex-1">
                                   <span className="text-[10px] font-extrabold uppercase bg-white/60 px-1.5 py-0.5 rounded mr-2">
                                     Jam {jam}
                                   </span>
@@ -699,9 +717,20 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                                       return firstItem.mulai && firstItem.selesai ? `${firstItem.mulai} - ${firstItem.selesai}` : JAM_TIME_MAP[jam];
                                     })()}
                                   </span>
-                                  <h4 className="font-bold text-sm mt-1">{displayMapel}</h4>
+                                  <h4 className="font-bold text-sm mt-1 break-words">{displayMapel}</h4>
+                                  {/* Same operational facts as the desktop grid: do not hide
+                                      supervisory notes or dated assignment reasons on mobile. */}
+                                  {annotations.statusLabels.map((status) => (
+                                    <div key={status} className="mt-1 text-[10px] font-extrabold uppercase leading-snug break-words">{status}</div>
+                                  ))}
+                                  {annotations.operationalDetails.map((detail) => (
+                                    <p key={detail} className="mt-1 text-xs font-medium leading-relaxed whitespace-normal break-words">{detail}</p>
+                                  ))}
+                                  {annotations.specialNotes.map((note) => (
+                                    <p key={note} className="mt-1 text-xs leading-relaxed whitespace-normal break-words">Keterangan Khusus: {note}</p>
+                                  ))}
                                   <div className="mt-1">{badge}</div>
-                                  
+
                                   {/* Other Teachers Badge List if other teachers are teaching */}
                                   {(() => {
                                     const otherTeachersList: string[] = [];
@@ -737,8 +766,8 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                                     return null;
                                   })()}
                                 </div>
-                                <div className="text-right text-xs">
-                                  <span className="block font-bold">Kelas {displayKelas}</span>
+                                <div className="text-right text-xs min-w-0 max-w-[43%] shrink-0">
+                                  <span className="block font-bold whitespace-normal break-words">Kelas {displayKelas}</span>
                                 </div>
                               </div>
                             );
@@ -793,6 +822,16 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
 
             {/* Modal Body */}
             <div className="p-6 space-y-6 overflow-y-auto">
+              {selectedDetailAnnotations && (selectedDetailAnnotations.statusLabels.length > 0 || selectedDetailAnnotations.operationalDetails.length > 0) && (
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 space-y-1 break-words">
+                  {selectedDetailAnnotations.statusLabels.map((status) => (
+                    <div key={status} className="text-xs font-black text-indigo-900 uppercase">{status}</div>
+                  ))}
+                  {selectedDetailAnnotations.operationalDetails.map((detail) => (
+                    <p key={detail} className="text-sm text-indigo-900 whitespace-normal break-words">{detail}</p>
+                  ))}
+                </div>
+              )}
               <div className="space-y-4">
                 {(() => {
                   interface GroupedScheduleItem {

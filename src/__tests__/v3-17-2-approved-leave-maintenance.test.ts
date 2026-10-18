@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,readdirSync} from 'node:fs';
 import {approvedLeaveVisible,approvedLeaveEditableSessions,explainApprovedLeaveDatabaseError} from '../domain/approvedLeaveMaintenance.ts';
+import {getTeacherWeekSlotAnnotations} from '../domain/schedule/teacherWeeklyPresentation.ts';
 const read=(f:string)=>readFileSync(f,'utf8');
 
 test('list hides past dates and soft-deleted requests by default, but keeps events ending today',()=>{
@@ -29,7 +30,12 @@ test('joined classes share one edit button per date and JP',()=>{
 test('official-duty leave rows use absence-red rather than purple and remain labeled not teaching',()=>{
   const view=read('src/components/JadwalLengkap.tsx');
   assert.match(view,/weekStatus === "TUGAS_RESMI"\)\) cellClasses = "bg-rose-100 text-red-900 border-l-4 border-l-red-600/);
-  assert.match(view,/TUGAS SEKOLAH — TIDAK MENGAJAR/);
+  // V3.17.3 RC2 moved the label to the shared desktop/mobile presentation
+  // helper. Assert the rendered meaning, not a hard-coded string location.
+  assert.deepEqual(getTeacherWeekSlotAnnotations([
+    {weekStatus:'TUGAS_RESMI',weekDetail:'Mengawas TKA',keterangan_khusus:''},
+  ],'EFFECTIVE').statusLabels,['TUGAS SEKOLAH — TIDAK MENGAJAR']);
+  assert.match(view,/getTeacherWeekSlotAnnotations\(items, scheduleMode\)/);
   assert.match(view,/weekStatus === "BADAL"\)\) cellClasses = "bg-amber/);
 });
 
