@@ -124,3 +124,27 @@ export class SupabasePublicLeaveRepository implements PublicLeaveRepository {
     throw new Error("Pengajuan izin membutuhkan bukti dari manajemen. Gunakan alur upload bukti.");
   }
 }
+
+/** Authenticated ADMIN/WAKASEK shortcut only. PostgreSQL validates the role,
+ * creates the request and (optionally) approves in ONE transaction. */
+export async function submitStaffLeaveRequest(
+  payload: PublicLeaveSubmissionPayload, approveNow: boolean, authorizationNote: string,
+): Promise<PublicLeaveSubmitResult> {
+  const {data,error}=await requireSupabaseClient().rpc('ejadwal_submit_staff_leave_v1',{
+    ...payload,p_approve_now:approveNow,p_authorization_note:authorizationNote.trim()||null,
+  });
+  if(error) throw new Error(`Pengajuan staf gagal: ${error.message}`);
+  const row=(data||{}) as PublicLeaveRpcRow;
+  if(!row.request_id||!row.request_code||!['SUBMITTED','APPROVED'].includes(String(row.status)))
+    throw new Error('RPC staf tidak mengembalikan status izin yang valid.');
+  return {
+    requestId:row.request_id,requestCode:row.request_code,
+    status:String(row.status),
+    slotCount:Number(row.period_count??row.slot_count??payload.p_periods.length),
+    teachingSlotCount:Number(row.teaching_slot_count??payload.p_slots.length),
+    freePeriodCount:Number(row.free_period_count??payload.p_periods.filter(x=>x.period_type==='FREE').length),
+    taskUploadToken:String(row.task_upload_token||''),
+    taskUploadExpiresAt:String(row.task_upload_expires_at||''),
+    taskCount:Number(row.task_count??payload.p_tasks.length),
+  };
+}

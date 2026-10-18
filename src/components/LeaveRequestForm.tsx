@@ -29,10 +29,14 @@ import {
 import { syncTaskResourcesWithText } from "../domain/taskResources";
 import { saveStoredTaskAccess } from "../domain/taskRecovery";
 import { uploadPublicLeaveTaskFile, type PublicLeaveTaskUploadResult } from "../infrastructure/drive/publicLeaveTaskDriveBridge";
-import { SupabasePublicLeaveRepository, type ExistingLeaveFreeCorrection, type PendingManagementEvidence } from "../infrastructure/repositories/supabasePublicLeaveRepository";
+import { SupabasePublicLeaveRepository, submitStaffLeaveRequest, type ExistingLeaveFreeCorrection, type PendingManagementEvidence } from "../infrastructure/repositories/supabasePublicLeaveRepository";
+import type { PublicLeaveSubmitResult } from "../infrastructure/repositories/publicLeaveRepository";
 import { isSupabaseConfigured } from "../infrastructure/supabase/client";
 import { evidenceExtension } from "../domain/managementLeaveEvidence";
 import { getCurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
+
+import { T, useLanguage } from '../i18n/LanguageProvider';
+import { localeIntl } from '../i18n/translations';
 
 interface LeaveRequestFormProps {
   teachers: Teacher[];
@@ -43,6 +47,7 @@ interface LeaveRequestFormProps {
   selectedTeacher: string;
   driveBridgeUrl?: string;
   onBack: () => void;
+  onChanged?: () => void | Promise<void>;
 }
 
 function localDateString(): string {
@@ -53,12 +58,12 @@ function localDateString(): string {
   return `${year}-${month}-${day}`;
 }
 
-function formatDateIndo(value: string): string {
+function formatDateIndo(value: string, locale: string = "id-ID"): string {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return value;
   const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString("id-ID", {
+  return date.toLocaleDateString(locale, {
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -80,8 +85,9 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
   kalenderAkademik = [],
   selectedTeacher,
   driveBridgeUrl = "",
-  onBack,
+  onBack, onChanged,
 }) => {
+  const {t, language}=useLanguage();
   const sortedTeachers = useMemo(
     () => [...teachers]
       .filter((teacher) => String(teacher.nama || "").trim())
@@ -115,9 +121,12 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
   const [correctionSelected, setCorrectionSelected] = useState<number[]>([]);
   const [correctionBusy, setCorrectionBusy] = useState(false);
   const [isStaffForCorrection, setIsStaffForCorrection] = useState(false);
+  const [staffApproveNow, setStaffApproveNow] = useState(false);
+  const [staffOralNote, setStaffOralNote] = useState("");
   const [correctionSuccess, setCorrectionSuccess] = useState("");
   const [success, setSuccess] = useState<{
     requestId: string;
+    status: string;
     requestCode: string;
     slotCount: number;
     teachingSlotCount: number;
@@ -229,11 +238,9 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
     }
   };
 
-  const completeEvidenceSubmission = async (draft: PendingManagementEvidence, file: File) => {
-    await repository.uploadEvidence(draft, file);
-    await repository.finalizeEvidence(draft);
+  const finishSubmittedRequest = async (draft: PublicLeaveSubmitResult) => {
     setPendingEvidenceDraft(null);
-    saveStoredTaskAccess({
+    if (draft.status === 'SUBMITTED' && draft.taskUploadToken) saveStoredTaskAccess({
       requestCode: draft.requestCode,
       teacherName,
       scheduleDate,
@@ -267,6 +274,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
     setPendingFilesByPeriod({});
     setSuccess({
       requestId: draft.requestId,
+      status: draft.status,
       requestCode: draft.requestCode,
       slotCount: draft.slotCount,
       teachingSlotCount: draft.teachingSlotCount,
@@ -283,18 +291,29 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
     setDetail("");
   };
 
+  const completeEvidenceSubmission = async (draft: PendingManagementEvidence, file: File) => {
+    await repository.uploadEvidence(draft, file);
+    await repository.finalizeEvidence(draft);
+    await finishSubmittedRequest({...draft,status:'SUBMITTED'});
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError("");
-    if (!evidenceFile) {
-      setEvidenceModalOpen(true); // Button remains clickable, but no submission.
+    const staffDirect=isStaffForCorrection&&!pendingEvidenceDraft;
+    if (!staffDirect && !evidenceFile) {
+      setEvidenceModalOpen(true); // Anonymous and pending drafts always require evidence.
       return;
     }
-    try {
-      evidenceExtension(evidenceFile);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      return;
+    if (!staffDirect && evidenceFile) {
+      try { evidenceExtension(evidenceFile); }
+      catch (err) { setError(err instanceof Error ? err.message : String(err)); return; }
+    }
+    if (staffDirect && staffApproveNow && !staffOralNote.trim()) {
+      setError("Catatan persetujuan lisan wajib diisi untuk approval langsung.");return;
+    }
+    if (staffDirect && staffApproveNow && Object.values(pendingFilesByPeriod as Record<number,File[]>).some(files=>files.length>0)) {
+      setError("Upload file tugas sebelum approval langsung tidak tersedia. Gunakan link tugas, atau kirim dahulu ke antrean persetujuan.");return;
     }
     if (!isSupabaseConfigured) {
       setError("Supabase belum dikonfigurasi. Pengajuan tidak dikirim.");
@@ -320,9 +339,20 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
         teacherName, scheduleDate, requestType, reason, detail,
         slots: selectedSlots, tasks,
       });
-      const draft = await repository.createEvidenceDraft(payload, evidenceFile);
-      setPendingEvidenceDraft(draft);
-      await completeEvidenceSubmission(draft, evidenceFile);
+      if (staffDirect) {
+        // RPC verifies auth.uid() + server-side staff role, never Admin Mode alone.
+        const submitted=await submitStaffLeaveRequest(payload,staffApproveNow,staffOralNote);
+        await finishSubmittedRequest(submitted);
+        if (submitted.status === "APPROVED") {
+          try { await onChanged?.(); }
+          catch { setUploadError("Izin berhasil disetujui, tetapi refresh jadwal gagal. Klik Refresh Supabase untuk memuat penugasan terbaru."); }
+        }
+      } else {
+        if (!evidenceFile) throw new Error("Bukti izin diperlukan.");
+        const draft = await repository.createEvidenceDraft(payload, evidenceFile);
+        setPendingEvidenceDraft(draft);
+        await completeEvidenceSubmission(draft, evidenceFile);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
@@ -347,6 +377,8 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
     setError("");
     setUploadError("");
     setEvidenceFile(null);
+    setStaffApproveNow(false);
+    setStaffOralNote("");
     setPendingEvidenceDraft(null);
     setEvidenceModalOpen(false);
     setUploadedByPeriod({});
@@ -385,9 +417,9 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
       {evidenceModalOpen && (
         <div role="presentation" className="fixed inset-0 z-[100] bg-slate-950/60 flex items-center justify-center p-4">
           <div role="alertdialog" aria-modal="true" aria-labelledby="required-evidence-title" aria-describedby="required-evidence-description" className="w-full max-w-md rounded-2xl bg-white shadow-2xl p-6 space-y-3">
-            <div className="flex gap-2 items-center text-red-700 font-black" id="required-evidence-title"><AlertTriangle className="w-5 h-5" /> Bukti izin wajib dilampirkan</div>
+            <div className="flex gap-2 items-center text-red-700 font-black" id="required-evidence-title"><AlertTriangle className="w-5 h-5" /> <T>{"Bukti izin wajib dilampirkan"}</T></div>
             <p id="required-evidence-description" className="text-sm text-slate-700">Harus upload bukti izin dari manajemen. Pengajuan belum dikirim dan tidak akan masuk antrean persetujuan sampai screenshot berhasil diunggah.</p>
-            <button type="button" autoFocus onClick={() => setEvidenceModalOpen(false)} className="w-full rounded-xl bg-emerald-600 text-white py-2.5 font-bold">Mengerti, saya akan upload</button>
+            <button type="button" autoFocus onClick={() => setEvidenceModalOpen(false)} className="w-full rounded-xl bg-emerald-600 text-white py-2.5 font-bold"><T>{"Mengerti, saya akan upload"}</T></button>
           </div>
         </div>
       )}
@@ -396,7 +428,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
           type="button"
           onClick={onBack}
           className="mt-1 p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors"
-          title="Kembali"
+          title={t("Kembali")}
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
@@ -404,7 +436,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
           <div className="flex items-center gap-2 text-emerald-700 text-xs font-extrabold uppercase tracking-[0.14em]">
             <ClipboardCheck className="w-4 h-4" /> V3.12.5 Teacher-Owned Leave & Task
           </div>
-          <h2 className="text-2xl sm:text-3xl font-black text-slate-900 mt-1">Ajukan Izin Mengajar</h2>
+          <h2 className="text-2xl sm:text-3xl font-black text-slate-900 mt-1"><T>{"Ajukan Izin Mengajar"}</T></h2>
           <p className="text-sm text-slate-500 mt-1 max-w-2xl">
             Tidak perlu login. Ketidakhadiran dimulai dari JP-0 Homeroom Session. JP mengajar menghasilkan badal; JP free tetap dicatat hanya untuk statistik kehadiran.
           </p>
@@ -423,23 +455,23 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
           <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto">
             <CheckCircle2 className="w-8 h-8" />
           </div>
-          <h3 className="text-xl font-black text-slate-900 mt-4">Pengajuan berhasil dikirim</h3>
-          <p className="text-sm text-slate-500 mt-1">Bukti izin berhasil diterima secara privat. Status: <strong>SUBMITTED</strong> — menunggu pemeriksaan Wakakur.</p>
+          <h3 className="text-xl font-black text-slate-900 mt-4"><T>{"Pengajuan berhasil dikirim"}</T></h3>
+          <p className="text-sm text-slate-500 mt-1">Status: <strong>{success.status}</strong> {success.status==='APPROVED'?'— Disetujui langsung oleh akun staf terverifikasi.':'— Menunggu pemeriksaan Wakakur.'}</p>
           <div className="mt-5 inline-flex flex-col items-center rounded-2xl border border-slate-200 bg-slate-50 px-6 py-4">
-            <span className="text-[11px] uppercase tracking-widest font-bold text-slate-400">Kode Pengajuan</span>
+            <span className="text-[11px] uppercase tracking-widest font-bold text-slate-400"><T>{"Kode Pengajuan"}</T></span>
             <strong className="font-mono text-xl text-slate-900 mt-1 select-all">{success.requestCode}</strong>
-            <span className="text-xs text-slate-500 mt-2">{success.slotCount} JP ketidakhadiran tercatat</span>
-            <span className="text-[11px] text-slate-400 mt-1">{success.teachingSlotCount} kelas butuh coverage • {success.freePeriodCount} JP free</span>
+            <span className="text-xs text-slate-500 mt-2">{success.slotCount} <T>{"JP ketidakhadiran tercatat"}</T></span>
+            <span className="text-[11px] text-slate-400 mt-1">{success.teachingSlotCount} <T>{"kelas butuh coverage •"}</T> {success.freePeriodCount} <T>{"JP free"}</T></span>
           </div>
-          {success.teachingPeriods.length > 0 && (
+          {success.status !== "APPROVED" && success.teachingPeriods.length > 0 && (
             <div className="mt-6 text-left rounded-2xl border border-indigo-200 bg-indigo-50/50 p-4 sm:p-5">
-              <div className="flex items-center gap-2 font-black text-indigo-900"><UploadCloud className="w-5 h-5" /> Lampiran Tugas</div>
+              <div className="flex items-center gap-2 font-black text-indigo-900"><UploadCloud className="w-5 h-5" /> <T>{"Lampiran Tugas"}</T></div>
               <p className="text-xs text-indigo-700 mt-1">File yang dipilih di form tadi otomatis dicoba upload setelah pengajuan dibuat. Di sini guru bisa menambah file atau retry bila ada upload yang gagal; token hanya berlaku sementara untuk pengajuan ini.</p>
               <div className="mt-4 space-y-3">
                 {success.teachingPeriods.map((item) => (
                   <div key={`upload-${item.period}`} className="rounded-xl border border-indigo-100 bg-white p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="text-xs font-black text-slate-900">JP {item.period} • {item.classCode}</div>
+                      <div className="text-xs font-black text-slate-900"><T>{"JP"}</T> {item.period} • {item.classCode}</div>
                       <div className="text-[11px] text-slate-500">{item.subject || "Mata pelajaran"}</div>
                       {(uploadedByPeriod[item.period] || []).map((resource) => (
                         <a key={resource.resourceId || resource.url} href={resource.url} target="_blank" rel="noreferrer" className="mt-1 block text-[11px] text-emerald-700 font-bold truncate">📎 {resource.fileName}</a>
@@ -464,13 +496,13 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
               {uploadError && <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 font-semibold">{uploadError}</div>}
             </div>
           )}
-          <p className="text-xs text-slate-400 mt-4">Simpan atau screenshot kode ini bila perlu dikonfirmasi ke Wakakur.</p>
+          <p className="text-xs text-slate-400 mt-4"><T>{"Simpan atau screenshot kode ini bila perlu dikonfirmasi ke Wakakur."}</T></p>
           <div className="mt-6 flex flex-wrap justify-center gap-2">
             <button type="button" onClick={resetForAnother} className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm">
-              Buat Pengajuan Lain
+              <T>{"Buat Pengajuan Lain"}</T>
             </button>
             <button type="button" onClick={onBack} className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm">
-              Kembali ke Dashboard
+              <T>{"Kembali ke Dashboard"}</T>
             </button>
           </div>
         </div>
@@ -478,7 +510,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
         <form onSubmit={handleSubmit} className="grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)] gap-6 items-start">
           <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5 sm:p-6 space-y-5">
             <div>
-              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Nama Guru</label>
+              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500"><T>{"Nama Guru"}</T></label>
               <div className="relative mt-2">
                 <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                 <select
@@ -490,14 +522,14 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
                   }}
                   className="w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 py-3 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
                 >
-                  <option value="">Pilih nama guru...</option>
+                  <option value="">{t("Pilih nama guru...")}</option>
                   {sortedTeachers.map((teacher) => (
                     <option key={teacher.id || teacher.nama} value={teacher.nama}>{teacher.nama}</option>
                   ))}
                 </select>
               </div>
               <p className="text-[11px] text-slate-400 mt-1.5">
-                Mengganti nama di sini tidak mengubah guru terakhir yang sedang dilihat pada E-Jadwal.
+                <T>{"Mengganti nama di sini tidak mengubah guru terakhir yang sedang dilihat pada E-Jadwal."}</T>
               </p>
             </div>
 
@@ -515,67 +547,74 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 py-3 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
                 />
               </div>
-              {scheduleDate && <p className="text-[11px] text-slate-400 mt-1.5">{formatDateIndo(scheduleDate)}</p>}
+              {scheduleDate && <p className="text-[11px] text-slate-400 mt-1.5">{formatDateIndo(scheduleDate,localeIntl(language))}</p>}
             </div>
 
             <div>
-              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Jenis Izin</label>
+              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500"><T>{"Jenis Izin"}</T></label>
               <div className="grid sm:grid-cols-2 gap-2 mt-2">
                 <button
                   type="button"
                   onClick={() => handleRequestType("FULL_DAY")}
                   className={`rounded-xl border px-4 py-3 text-left transition-colors ${requestType === "FULL_DAY" ? "border-emerald-400 bg-emerald-50 text-emerald-900" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"}`}
                 >
-                  <div className="font-extrabold text-sm">Sehari penuh</div>
-                  <div className="text-[11px] opacity-70 mt-0.5">Semua JP sekolah aktif, termasuk JP free, otomatis dipilih.</div>
+                  <div className="font-extrabold text-sm"><T>{"Sehari penuh"}</T></div>
+                  <div className="text-[11px] opacity-70 mt-0.5"><T>{"Semua JP sekolah aktif, termasuk JP free, otomatis dipilih."}</T></div>
                 </button>
                 <button
                   type="button"
                   onClick={() => handleRequestType("PARTIAL")}
                   className={`rounded-xl border px-4 py-3 text-left transition-colors ${requestType === "PARTIAL" ? "border-emerald-400 bg-emerald-50 text-emerald-900" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"}`}
                 >
-                  <div className="font-extrabold text-sm">Sebagian JP</div>
-                  <div className="text-[11px] opacity-70 mt-0.5">Centang hanya JP yang ditinggalkan.</div>
+                  <div className="font-extrabold text-sm"><T>{"Sebagian JP"}</T></div>
+                  <div className="text-[11px] opacity-70 mt-0.5"><T>{"Centang hanya JP yang ditinggalkan."}</T></div>
                 </button>
               </div>
             </div>
 
             <div>
-              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Alasan</label>
+              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500"><T>{"Alasan"}</T></label>
               <input
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
-                placeholder="Contoh: sakit, keperluan keluarga, dinas..."
+                placeholder={t("Contoh: sakit, keperluan keluarga, dinas...")}
                 className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
               />
             </div>
 
             <div>
-              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Catatan <span className="font-normal normal-case">(opsional)</span></label>
+              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500"><T>{"Catatan"}</T> <span className="font-normal normal-case"><T>{"(opsional)"}</T></span></label>
               <textarea
                 value={detail}
                 onChange={(event) => setDetail(event.target.value)}
                 rows={3}
-                placeholder="Keterangan tambahan tentang izin bila diperlukan."
+                placeholder={t("Keterangan tambahan tentang izin bila diperlukan.")}
                 className="mt-2 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
               />
             </div>
 
-            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 space-y-3">
+            {isStaffForCorrection&&!pendingEvidenceDraft&&<div className="rounded-2xl border border-emerald-300 bg-emerald-50 p-4 space-y-3">
+              <div className="font-black text-sm text-emerald-900 flex items-center gap-2"><ShieldCheckIcon className="w-5 h-5"/> <T>{"Mode Pengajuan Staf Terautentikasi"}</T></div>
+              <p className="text-xs text-emerald-800">Akun ADMIN/WAKASEK dapat mengirim pengajuan tanpa screenshot. Akses diverifikasi ulang oleh RPC Supabase, seluruh tindakan dicatat di audit. Persetujuan lisan dapat diproses langsung bila diperlukan.</p>
+              <label className="flex gap-2 items-start text-xs font-bold text-emerald-900"><input type="checkbox" checked={staffApproveNow} onChange={e=>setStaffApproveNow(e.target.checked)} className="mt-0.5"/> <T>{"Setujui langsung — sudah mendapat persetujuan lisan manajemen"}</T></label>
+              {staffApproveNow&&<textarea value={staffOralNote} onChange={e=>setStaffOralNote(e.target.value)} rows={2} placeholder="Catatan otorisasi lisan: oleh siapa, kapan, dan alasan mendesak (wajib)" className="w-full rounded-lg border border-emerald-300 p-2 text-xs"/>}
+              <p className="text-[11px] text-emerald-700">Default: hanya SUBMITTED. Centang persetujuan langsung jika benar-benar telah mendapat otorisasi.</p>
+            </div>}
+            {!isStaffForCorrection&&<div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 space-y-3">
               <div className="flex items-center gap-2 font-black text-amber-950 text-sm">
-                <ShieldCheckIcon /> Bukti Izin dari Manajemen <span className="text-red-600">(wajib)</span>
+                <ShieldCheckIcon /> <T>{"Bukti Izin dari Manajemen"}</T> <span className="text-red-600"><T>{"(wajib)"}</T></span>
               </div>
-              <p className="text-xs text-amber-900">Upload screenshot WhatsApp dari manajemen yang menyatakan izin diberikan. JPG, PNG, atau WEBP (maksimal 5 MB). Bukti disimpan privat dan hanya petugas berwenang yang dapat melihatnya.</p>
+              <p className="text-xs text-amber-900"><T>{"Upload screenshot WhatsApp dari manajemen yang menyatakan izin diberikan. JPG, PNG, atau WEBP (maksimal 5 MB). Bukti disimpan privat dan hanya petugas berwenang yang dapat melihatnya."}</T></p>
               <a
                 href="https://wa.me/6281325245959?text=Assalamu%27alaikum%2C%20saya%20ingin%20meminta%20persetujuan%20izin%20kepada%20manajemen."
                 target="_blank" rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-800 hover:bg-emerald-100"
               >
-                <MessageCircle className="h-4 w-4"/> Hubungi Manajemen via WA
+                <MessageCircle className="h-4 w-4"/> <T>{"Hubungi Manajemen via WA"}</T>
               </a>
-              <p className="text-[11px] text-amber-900">Nomor manajemen: +62 813-2524-5959. Dapatkan persetujuan terlebih dahulu, lalu unggah screenshot-nya di bawah.</p>
+              <p className="text-[11px] text-amber-900"><T>{"Nomor manajemen: +62 813-2524-5959. Dapatkan persetujuan terlebih dahulu, lalu unggah screenshot-nya di bawah."}</T></p>
               <label className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-amber-300 text-sm font-bold text-amber-900 cursor-pointer hover:bg-amber-100">
-                <UploadCloud className="w-4 h-4" /> {evidenceFile ? "Ganti Bukti Izin" : "Pilih Screenshot Persetujuan"}
+                <UploadCloud className="w-4 h-4" /> {t(evidenceFile ? "Ganti Bukti Izin" : "Pilih Screenshot Persetujuan")}
                 <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only"
                   onChange={(event) => {
                     const file = event.target.files?.[0];
@@ -595,24 +634,24 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
               {evidenceFile && <p className="text-xs text-emerald-800 font-semibold break-all">✓ {evidenceFile.name} ({Math.ceil(evidenceFile.size / 1024)} KB)</p>}
               {pendingEvidenceDraft && (
                 <div className="rounded-xl border border-amber-400 bg-white p-3 text-xs text-amber-900">
-                  <strong>Menunggu Bukti — {pendingEvidenceDraft.requestCode}</strong>
+                  <strong><T>{"Menunggu Bukti —"}</T> {pendingEvidenceDraft.requestCode}</strong>
                   <p className="mt-1">Draft sudah tercatat, tetapi belum masuk Persetujuan Izin. Klik Kirim lagi untuk mencoba upload/verifikasi ulang (bukan membuat izin kedua). Jangan tutup tab sebelum selesai.</p>
                 </div>
               )}
-            </div>
+            </div>}
 
             <div className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-3">
               <div>
-                <div className="flex items-center gap-2 text-sm font-black text-indigo-900"><Paperclip className="w-4 h-4" /> Tugas untuk Guru Badal</div>
-                <p className="text-[11px] text-indigo-700 mt-1">Isi tugas untuk JP pelajaran (JP1–JP6). JP-0 Homeroom tetap membutuhkan badal tetapi tidak memerlukan materi tugas. Link yang ditempel otomatis disimpan sebagai resource.</p>
+                <div className="flex items-center gap-2 text-sm font-black text-indigo-900"><Paperclip className="w-4 h-4" /> <T>{"Tugas untuk Guru Badal"}</T></div>
+                <p className="text-[11px] text-indigo-700 mt-1"><T>{"Isi tugas untuk JP pelajaran (JP1–JP6). JP-0 Homeroom tetap membutuhkan badal tetapi tidak memerlukan materi tugas. Link yang ditempel otomatis disimpan sebagai resource."}</T></p>
               </div>
               {selectedSlots.filter((slot) => slot.periodType === "TEACHING" && slot.period > 0).length === 0 ? (
-                <div className="text-xs text-slate-500 rounded-xl bg-white/70 border border-indigo-100 p-3">Pilih minimal satu JP mengajar untuk menyiapkan tugas.</div>
+                <div className="text-xs text-slate-500 rounded-xl bg-white/70 border border-indigo-100 p-3"><T>{"Pilih minimal satu JP mengajar untuk menyiapkan tugas."}</T></div>
               ) : selectedSlots.filter((slot) => slot.periodType === "TEACHING" && slot.period > 0).map((slot) => (
                 <div key={`task-${slot.period}`} className="rounded-xl bg-white border border-indigo-100 p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <div className="text-xs font-black text-slate-900">JP {slot.period} • {slot.classCode}</div>
+                      <div className="text-xs font-black text-slate-900"><T>{"JP"}</T> {slot.period} • {slot.classCode}</div>
                       <div className="text-[11px] text-slate-500 mt-0.5">{slot.subject || "Mata pelajaran"}</div>
                     </div>
                     {syncTaskResourcesWithText(taskTextByPeriod[slot.period] || "", []).length > 0 && (
@@ -628,7 +667,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
                   />
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-black cursor-pointer">
-                      <UploadCloud className="w-3.5 h-3.5" /> Pilih File Tugas
+                      <UploadCloud className="w-3.5 h-3.5" /> <T>{"Pilih File Tugas"}</T>
                       <input
                         type="file"
                         multiple
@@ -660,16 +699,16 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
 
           <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden lg:sticky lg:top-4">
             <div className="px-5 py-4 bg-slate-900 text-white">
-              <div className="flex items-center gap-2 font-black"><Clock3 className="w-5 h-5 text-emerald-300" /> JP Ketidakhadiran</div>
-              <div className="text-xs text-slate-300 mt-1">JP-0 Homeroom wajib digantikan bila wali/pendamping kelas tidak hadir. JP mengajar menghasilkan badal; JP free hanya dicatat untuk statistik.</div>
+              <div className="flex items-center gap-2 font-black"><Clock3 className="w-5 h-5 text-emerald-300" /> <T>{"JP Ketidakhadiran"}</T></div>
+              <div className="text-xs text-slate-300 mt-1"><T>{"JP-0 Homeroom wajib digantikan bila wali/pendamping kelas tidak hadir. JP mengajar menghasilkan badal; JP free hanya dicatat untuk statistik."}</T></div>
             </div>
 
             <div className="p-4 space-y-2 max-h-[460px] overflow-y-auto">
               {!teacherName ? (
-                <div className="p-5 text-center text-sm text-slate-400">Pilih guru terlebih dahulu.</div>
+                <div className="p-5 text-center text-sm text-slate-400"><T>{"Pilih guru terlebih dahulu."}</T></div>
               ) : availableSlots.length === 0 ? (
                 <div className="p-5 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-slate-200">
-                  Tidak ada JP sekolah aktif yang dapat diajukan pada tanggal ini. Hari/libur penuh dan JP yang sudah tercatat izin tidak ditampilkan.
+                  <T>{"Tidak ada JP sekolah aktif yang dapat diajukan pada tanggal ini. Hari/libur penuh dan JP yang sudah tercatat izin tidak ditampilkan."}</T>
                 </div>
               ) : (
                 availableSlots.map((slot) => {
@@ -713,7 +752,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
 
             <div className="border-t border-slate-100 p-4 bg-slate-50">
               <div className="flex justify-between text-xs font-semibold text-slate-500 mb-3">
-                <span>JP dipilih</span>
+                <span><T>{"JP dipilih"}</T></span>
                 <span className="text-slate-900 font-black">{selectedSlots.length} / {availableSlots.length}</span>
               </div>
               {error && <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{error}</div>}
@@ -735,7 +774,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
                       <div className="flex flex-wrap gap-3">
                         {freeCorrection.missingFreePeriods.map((period) => (
                           <label key={period} className="flex items-center gap-1.5 text-xs font-semibold text-indigo-900 cursor-pointer">
-                            <input type="checkbox" checked={correctionSelected.includes(period)} onChange={(event) => setCorrectionSelected((current) => event.target.checked ? [...current, period].sort((a, b) => a - b) : current.filter((jp) => jp !== period))} /> JP{period} Free
+                            <input type="checkbox" checked={correctionSelected.includes(period)} onChange={(event) => setCorrectionSelected((current) => event.target.checked ? [...current, period].sort((a, b) => a - b) : current.filter((jp) => jp !== period))} /> <T>{"JP"}</T>{period} Free
                           </label>
                         ))}
                       </div>
@@ -753,7 +792,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
               >
                 <Send className="w-4 h-4" /> {submitting ? "Mengirim Izin & Tugas..." : "Kirim Pengajuan Izin"}
               </button>
-              <p className="text-[10px] text-slate-400 text-center mt-2">Tanpa bukti manajemen, izin tidak masuk antrean approval. JP free hanya untuk statistik dan tidak menghasilkan badal.</p>
+              <p className="text-[10px] text-slate-400 text-center mt-2">{isStaffForCorrection?'Staf login: screenshot tidak wajib, persetujuan langsung hanya dengan catatan otorisasi.':'Tanpa bukti manajemen, izin tidak masuk antrean approval.'} JP free hanya untuk statistik dan tidak menghasilkan badal.</p>
             </div>
           </div>
         </form>

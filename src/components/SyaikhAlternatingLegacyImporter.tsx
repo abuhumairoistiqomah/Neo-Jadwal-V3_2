@@ -11,6 +11,7 @@ import { getCurrentUserContext } from "../infrastructure/auth/supabaseAuthReposi
 import { explainSyaikhPublishError, isSyaikhTeacherConflictRequired } from "../domain/syaikhRotationPublishErrors";
 import { SearchableSelect } from "./ui/SearchableSelect";
 
+import { T } from '../i18n/LanguageProvider';
 interface Props {
   schedules: ScheduleItem[];
   incidentals: JadwalInsidentalItem[];
@@ -148,7 +149,7 @@ export const SyaikhAlternatingLegacyImporter: React.FC<Props> = ({ schedules, in
         <button type="button" onClick={() => setSelections({})} className="border rounded-lg px-3 py-2 text-xs font-bold">Lewati semua</button>
       </div>
       {templates.issues.map((issue, index) => <p key={index} className="mt-2 text-xs text-rose-700">{issue.code}: {issue.message}</p>)}
-      {templates.slots.length > 0 && <div className="overflow-auto max-h-72 mt-3 border rounded-xl"><table className="w-full min-w-[600px] text-xs"><thead className="sticky top-0 bg-slate-100"><tr><th className="p-2 text-left">Kelas</th><th>Hari</th><th>JP</th><th>Pilih untuk pekan ini</th></tr></thead><tbody>{templates.slots.map((slot) => <tr key={slot.key} className="border-t"><td className="p-2 font-semibold">{slot.className}</td><td>{dayNames[slot.isoDay]}</td><td className="text-center">{slot.period}</td><td className="p-2"><select aria-label={`Pilihan ${slot.className} JP${slot.period}`} value={selections[slot.key] || "SKIP"} onChange={(e) => setSelections((old) => ({ ...old, [slot.key]: e.target.value as FlexibleScenarioChoice }))} className="border rounded-lg p-2 w-full"><option value="SKIP">Lewati — jangan ubah</option>{slot.a && <option value="A">A: {slot.a.subject}</option>}{slot.b && <option value="B">B: {slot.b.subject}</option>}</select></td></tr>)}</tbody></table></div>}
+      {templates.slots.length > 0 && <div className="overflow-auto max-h-72 mt-3 border rounded-xl"><table className="w-full min-w-[600px] text-xs"><thead className="sticky top-0 bg-slate-100"><tr><th className="p-2 text-left">Kelas</th><th>Hari</th><th><T>{"JP"}</T></th><th>Pilih untuk pekan ini</th></tr></thead><tbody>{templates.slots.map((slot) => <tr key={slot.key} className="border-t"><td className="p-2 font-semibold">{slot.className}</td><td>{dayNames[slot.isoDay]}</td><td className="text-center">{slot.period}</td><td className="p-2"><select aria-label={`Pilihan ${slot.className} JP${slot.period}`} value={selections[slot.key] || "SKIP"} onChange={(e) => setSelections((old) => ({ ...old, [slot.key]: e.target.value as FlexibleScenarioChoice }))} className="border rounded-lg p-2 w-full"><option value="SKIP">Lewati — jangan ubah</option>{slot.a && <option value="A">A: {slot.a.subject}</option>}{slot.b && <option value="B">B: {slot.b.subject}</option>}</select></td></tr>)}</tbody></table></div>}
       <button type="button" disabled={!templates.slots.length || templates.issues.some((i) => i.severity === "ERROR")} onClick={fillFromTemplate}
         className="mt-3 px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-sm disabled:opacity-40">Tambahkan Pilihan Pekan Ini ke Daftar Bertanggal</button>
       <p className="mt-2 text-xs text-slate-500">Untuk pekan berikutnya, ubah Senin dan pilih ulang secara manual. Tidak ada pewarisan pilihan otomatis.</p>

@@ -3,6 +3,9 @@ import { DAY_ORDER as HARI_ORDER } from "../constants/schedule";
 import { Teacher, ScheduleItem, normalizeDay, checkIsITBA, isITBACoreSubject, isClassMatch } from "../types";
 import { ArrowLeft, BookOpen, ChevronUp, ChevronDown, UserCheck, Search, HelpCircle } from "lucide-react";
 
+import { T } from '../i18n/LanguageProvider';
+
+
 interface ListMapelProps {
   teachers: Teacher[];
   schedules: ScheduleItem[];
@@ -286,7 +289,7 @@ export const ListMapel: React.FC<ListMapelProps> = ({
           className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-indigo-600 bg-white px-4 py-2 rounded-xl border border-gray-100 hover:border-indigo-100 shadow-sm transition-all self-start"
         >
           <ArrowLeft className="w-4 h-4" />
-          Kembali ke Dashboard
+          <T>{"Kembali ke Dashboard"}</T>
         </button>
 
         <span className="text-sm font-medium text-gray-400">List Mata Pelajaran yang Diajar</span>
@@ -300,7 +303,7 @@ export const ListMapel: React.FC<ListMapelProps> = ({
           <div>
             <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
               <BookOpen className="w-5 h-5 text-indigo-500" />
-              Mata Pelajaran Diampu
+              <T>{"Mata Pelajaran Diampu"}</T>
             </h2>
             <p className="text-sm text-gray-500 mt-1">
               Daftar kelas, jadwal hari, dan total beban JP per kelas.
@@ -355,7 +358,7 @@ export const ListMapel: React.FC<ListMapelProps> = ({
                   <span className="text-base font-bold text-gray-800">{selectedTeacher}</span>
                 </div>
                 <div className="bg-indigo-50 border border-indigo-100 px-4 py-2 rounded-xl flex items-center gap-2">
-                  <span className="text-indigo-600 font-extrabold text-lg">{totalJP} JP</span>
+                  <span className="text-indigo-600 font-extrabold text-lg">{totalJP} <T>{"JP"}</T></span>
                   <span className="text-xs text-indigo-800 font-bold uppercase tracking-wider">Total Beban Mengajar</span>
                 </div>
               </div>
@@ -363,13 +366,13 @@ export const ListMapel: React.FC<ListMapelProps> = ({
                 {currentTeacher.wali_kelas && (
                   <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-xl font-semibold flex items-center gap-1">
                     <UserCheck className="w-3.5 h-3.5" />
-                    Wali Kelas {currentTeacher.wali_kelas}
+                    <T>{"Wali Kelas"}</T> {currentTeacher.wali_kelas}
                   </span>
                 )}
                 {currentTeacher.pendamping_kelas && (
                   <span className="bg-teal-50 text-teal-700 border border-teal-200 px-3 py-1.5 rounded-xl font-semibold flex items-center gap-1">
                     <UserCheck className="w-3.5 h-3.5" />
-                    Pendamping {currentTeacher.pendamping_kelas}
+                    <T>{"Pendamping"}</T> {currentTeacher.pendamping_kelas}
                   </span>
                 )}
               </div>
@@ -378,11 +381,11 @@ export const ListMapel: React.FC<ListMapelProps> = ({
             <div className="text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-100 p-3 rounded-xl flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 divide-y sm:divide-y-0 sm:divide-x divide-emerald-200/50">
               <div className="flex items-center gap-2 pb-2 sm:pb-0">
                 <HelpCircle className="w-4 h-4 text-emerald-500 shrink-0" />
-                <span>Baris berlatar <strong className="text-emerald-950">hijau muda</strong> menandakan guru bertugas sebagai Wali Kelas / Pendamping Kelas.</span>
+                <span><T>{"Baris berlatar"}</T> <strong className="text-emerald-950">hijau muda</strong> menandakan guru bertugas sebagai Wali Kelas / Pendamping Kelas.</span>
               </div>
               <div className="flex items-center gap-2 pt-2 sm:pt-0 sm:pl-4">
                 <span className="w-2.5 h-2.5 rounded bg-purple-500 shrink-0" />
-                <span>Baris berlatar <strong className="text-purple-950">ungu muda</strong> menandakan guru mahasiswa ITBA bertugas sebagai Pendamping Guru Mapel.</span>
+                <span><T>{"Baris berlatar"}</T> <strong className="text-purple-950">ungu muda</strong> menandakan guru mahasiswa ITBA bertugas sebagai Pendamping Guru Mapel.</span>
               </div>
             </div>
 
@@ -396,7 +399,7 @@ export const ListMapel: React.FC<ListMapelProps> = ({
                       className="p-4 cursor-pointer hover:bg-gray-100 transition-colors"
                       onClick={() => handleSort("mapel")}
                     >
-                      Mata Pelajaran <SortIcon colKey="mapel" />
+                      <T>{"Mata Pelajaran"}</T> <SortIcon colKey="mapel" />
                     </th>
                     <th 
                       id="th-hari"
@@ -454,7 +457,7 @@ export const ListMapel: React.FC<ListMapelProps> = ({
                         </td>
                         <td className="p-4 text-gray-600 font-medium">{item.hari}</td>
                         <td className="p-4 font-semibold text-gray-700">{item.kelas}</td>
-                        <td className="p-4 text-center font-extrabold text-indigo-600">{item.jp} JP</td>
+                        <td className="p-4 text-center font-extrabold text-indigo-600">{item.jp} <T>{"JP"}</T></td>
                         <td className="p-4 text-gray-500 font-medium">{item.waktu}</td>
                         <td className="p-4">
                           {item.roleType ? (
@@ -487,7 +490,7 @@ export const ListMapel: React.FC<ListMapelProps> = ({
                   ) : (
                     <tr>
                       <td colSpan={7} className="text-center py-8 text-gray-400 italic">
-                        Tidak ada mata pelajaran yang diajar
+                        <T>{"Tidak ada mata pelajaran yang diajar"}</T>
                       </td>
                     </tr>
                   )}
@@ -515,7 +518,7 @@ export const ListMapel: React.FC<ListMapelProps> = ({
                           {item.mapel}
                           {item.statusType === "bentrok" && (
                             <span className="text-[8px] bg-red-100 text-red-800 border border-red-200 font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider">
-                              Bentrok (1 JP)
+                              <T>{"Bentrok (1 JP)"}</T>
                             </span>
                           )}
                           {item.statusType === "gabung" && (
@@ -527,7 +530,7 @@ export const ListMapel: React.FC<ListMapelProps> = ({
                         <span className="text-xs text-gray-500 font-medium">Hari {item.hari} {item.waktu ? `• Waktu: ${item.waktu}` : ""}</span>
                       </div>
                       <span className="bg-indigo-50 text-indigo-700 font-extrabold text-xs px-2.5 py-1 rounded-lg shrink-0">
-                        {item.jp} JP
+                        {item.jp} <T>{"JP"}</T>
                       </span>
                     </div>
 
@@ -561,7 +564,7 @@ export const ListMapel: React.FC<ListMapelProps> = ({
                 ))
               ) : (
                 <div className="text-center py-6 text-sm text-gray-400 italic bg-gray-50 rounded-xl">
-                  Tidak ada mata pelajaran yang diajar
+                  <T>{"Tidak ada mata pelajaran yang diajar"}</T>
                 </div>
               )}
             </div>
@@ -569,7 +572,7 @@ export const ListMapel: React.FC<ListMapelProps> = ({
           </div>
         ) : (
           <div className="text-center py-10 text-gray-400">
-            Silakan pilih nama guru di Dashboard terlebih dahulu.
+            <T>{"Silakan pilih nama guru di Dashboard terlebih dahulu."}</T>
           </div>
         )}
       </div>

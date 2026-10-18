@@ -23,7 +23,7 @@ test("V3.14.1 renders human-readable Supabase errors", () => {
 
 test("V3.14.1 prioritizes teacher-accessible navigation before administration", () => {
   assert.ok(app.indexOf('id: "jadwal-kelas"') < app.indexOf('id: "approval-izin"'));
-  assert.match(app, />Administrasi<\/div>/);
+  assert.match(app, /section: "Administrasi"/); // V3.16.3: shared category metadata replaces literal desktop heading.
 });
 
 test("V3.14.1+ image export uses isolated safe clone pipeline", () => {

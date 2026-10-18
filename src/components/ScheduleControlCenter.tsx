@@ -22,6 +22,7 @@ import {
   type ScheduleVersionRow,
 } from "../infrastructure/repositories/scheduleVersionRepository";
 
+import { T } from '../i18n/LanguageProvider';
 interface ScheduleControlCenterProps {
   schedules: ScheduleItem[];
   incidentals: JadwalInsidentalItem[];
@@ -182,7 +183,7 @@ export const ScheduleControlCenter: React.FC<ScheduleControlCenterProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <GitBranch className="h-6 w-6 text-indigo-600" />
-              <h1 className="text-2xl font-black tracking-tight text-slate-900">Versi & Konflik Jadwal</h1>
+              <h1 className="text-2xl font-black tracking-tight text-slate-900"><T>{"Versi & Konflik Jadwal"}</T></h1>
             </div>
             <p className="mt-1 max-w-3xl text-sm text-slate-500">
               Riwayat publish, rollback canonical schedule, dan pusat deteksi bentrok. Rollback hanya memutar data jadwal; histori izin/badal/tugas tetap utuh.
@@ -296,7 +297,7 @@ export const ScheduleControlCenter: React.FC<ScheduleControlCenterProps> = ({
                   <p className="mt-2 text-sm font-semibold text-slate-700">{conflict.detail}</p>
                   <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-slate-500">
                     <span className="rounded-lg bg-white/80 px-2.5 py-1">{conflict.dayOrDate}</span>
-                    <span className="rounded-lg bg-white/80 px-2.5 py-1">JP {conflict.period}</span>
+                    <span className="rounded-lg bg-white/80 px-2.5 py-1"><T>{"JP"}</T> {conflict.period}</span>
                     {conflict.room && <span className="rounded-lg bg-white/80 px-2.5 py-1">📍 {conflict.room}</span>}
                     {conflict.classes.map((name) => <span key={name} className="rounded-lg bg-white/80 px-2.5 py-1">{name}</span>)}
                   </div>

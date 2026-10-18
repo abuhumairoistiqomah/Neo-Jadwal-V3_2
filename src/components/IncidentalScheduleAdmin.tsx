@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, CalendarPlus2, Edit3, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import type { JadwalInsidentalItem, KalenderAkademikItem, LogIzinItem, ScheduleItem } from "../domain/models";
 import { buildDatedEditorAvailability } from "../domain/schedule/editorDatedAvailability";
@@ -17,6 +17,7 @@ import { rankScheduleEditorTeachers, scheduleEditorCandidateLabel } from "../dom
 import { getCurrentUserContext, type CurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
 import { ScheduleAdminRepository, type ScheduleAdminContext } from "../infrastructure/repositories/scheduleAdminRepository";
 
+import { T } from '../i18n/LanguageProvider';
 interface Props {
   schedules: ScheduleItem[];
   incidentals: JadwalInsidentalItem[];
@@ -33,6 +34,7 @@ function labelDate(value: string): string {
 
 export const IncidentalScheduleAdmin: React.FC<Props> = ({ schedules, incidentals, logs = [], kalenderAkademik = [], onChanged, onBack }) => {
   const repo = useMemo(() => new ScheduleAdminRepository(), []);
+  const editorRef = useRef<HTMLElement>(null);
   const [auth, setAuth] = useState<CurrentUserContext | null>(null);
   const [context, setContext] = useState<ScheduleAdminContext | null>(null);
   const [loading, setLoading] = useState(true);
@@ -249,7 +251,7 @@ export const IncidentalScheduleAdmin: React.FC<Props> = ({ schedules, incidental
     setSpecialNote(row.keterangan_khusus || "");
     setReason(row.alasan || "");
     setIncidentalType(row.tipe_insidental || "Perubahan Jadwal");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    requestAnimationFrame(() => editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
 
   const remove = async (row: JadwalInsidentalItem) => {
@@ -274,14 +276,14 @@ export const IncidentalScheduleAdmin: React.FC<Props> = ({ schedules, incidental
 
   return <div className="space-y-6">
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div><button onClick={onBack} className="mb-2 inline-flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-800"><ArrowLeft className="w-4 h-4"/> Kembali</button><h1 className="flex items-center gap-2 text-2xl font-black text-slate-900"><CalendarPlus2 className="w-7 h-7 text-violet-600"/> Jadwal Insidental</h1><p className="mt-1 text-sm text-slate-500">Perubahan tanggal tertentu tanpa menyentuh jadwal master. Override untuk mengganti sesi normal; Additional untuk menambah sesi di slot kosong.</p></div>
+      <div><button onClick={onBack} className="mb-2 inline-flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-800"><ArrowLeft className="w-4 h-4"/> Kembali</button><h1 className="flex items-center gap-2 text-2xl font-black text-slate-900"><CalendarPlus2 className="w-7 h-7 text-violet-600"/> <T>{"Jadwal Insidental"}</T></h1><p className="mt-1 text-sm text-slate-500">Perubahan tanggal tertentu tanpa menyentuh jadwal master. Override untuk mengganti sesi normal; Additional untuk menambah sesi di slot kosong.</p></div>
       <button onClick={() => void load()} disabled={loading} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}/> Refresh</button>
     </div>
 
     {error && <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800">{error}</div>}
     {message && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">{message}</div>}
 
-    <section className="space-y-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+    <section ref={editorRef} style={{ scrollMarginTop: 90 }} className="space-y-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between"><div><h2 className="text-lg font-black">{editingId ? "Edit Insidental" : "Tambah Insidental"}</h2><p className="text-xs text-slate-500">WAKASEK/ADMIN dapat mengatur perubahan operasional harian.</p></div>{editingId && <button onClick={resetForm} className="text-xs font-black text-slate-500">Batal Edit</button>}</div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <Field label="Tanggal"><input type="date" value={date} onChange={(e)=>setDate(e.target.value)} className="input"/></Field>
@@ -332,7 +334,7 @@ export const IncidentalScheduleAdmin: React.FC<Props> = ({ schedules, incidental
           Lihat yang sudah lewat ({pastIncidentalCount})
         </label>
       </div>
-      <div className="space-y-3 p-5">{displayedIncidentals.length===0?<div className="py-8 text-center text-sm text-slate-400">{pastIncidentalCount > 0 && !showPastIncidentals ? "Tidak ada jadwal insidental hari ini atau mendatang. Centang ‘Lihat yang sudah lewat’ untuk melihat histori." : "Belum ada jadwal insidental."}</div>:displayedIncidentals.map((row)=><div key={row.id} className="flex flex-col gap-3 rounded-2xl border border-violet-100 bg-violet-50/30 p-4 lg:flex-row lg:items-center lg:justify-between"><div><div className="flex flex-wrap items-center gap-2"><span className="font-black text-slate-900">{row.kelas}</span><span className="rounded-lg bg-violet-100 px-2 py-1 text-[10px] font-black text-violet-800">{row.kind || "OVERRIDE"}</span></div><div className="mt-1 text-sm font-semibold text-slate-700">{labelDate(row.tanggal)} • JP {row.jam_ke}{row.mulai && row.selesai ? ` (${timeForInput(row.mulai)}–${timeForInput(row.selesai)})` : ""} • {row.mapel}</div><div className="mt-1 text-xs text-slate-500">{[row.guru1,row.guru2,row.guru3,row.guru4,row.guru5,row.guru6].filter(Boolean).join(" / ") || "Tanpa guru"}{row.alasan?` • ${row.alasan}`:""}</div></div><div className="flex gap-2"><button onClick={()=>startEdit(row)} className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black"><Edit3 className="w-4 h-4"/> Edit</button><button onClick={()=>void remove(row)} className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-700"><Trash2 className="w-4 h-4"/> Hapus</button></div></div>)}</div></section>
+      <div className="space-y-3 p-5">{displayedIncidentals.length===0?<div className="py-8 text-center text-sm text-slate-400">{pastIncidentalCount > 0 && !showPastIncidentals ? "Tidak ada jadwal insidental hari ini atau mendatang. Centang ‘Lihat yang sudah lewat’ untuk melihat histori." : "Belum ada jadwal insidental."}</div>:displayedIncidentals.map((row)=><div key={row.id} className="flex flex-col gap-3 rounded-2xl border border-violet-100 bg-violet-50/30 p-4 lg:flex-row lg:items-center lg:justify-between"><div><div className="flex flex-wrap items-center gap-2"><span className="font-black text-slate-900">{row.kelas}</span><span className="rounded-lg bg-violet-100 px-2 py-1 text-[10px] font-black text-violet-800">{row.kind || "OVERRIDE"}</span></div><div className="mt-1 text-sm font-semibold text-slate-700">{labelDate(row.tanggal)} • JP {row.jam_ke}{row.mulai && row.selesai ? ` (${timeForInput(row.mulai)}–${timeForInput(row.selesai)})` : ""} • {row.mapel}</div><div className="mt-1 text-xs text-slate-500">{[row.guru1,row.guru2,row.guru3,row.guru4,row.guru5,row.guru6].filter(Boolean).join(" / ") || "Tanpa guru"}{row.alasan?` • ${row.alasan}`:""}</div></div><div className="flex gap-2"><button onClick={()=>startEdit(row)} className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black"><Edit3 className="w-4 h-4"/> Edit</button><button onClick={()=>void remove(row)} className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-700"><Trash2 className="w-4 h-4"/> <T>{"Hapus"}</T></button></div></div>)}</div></section>
     <style>{`.input{width:100%;border:1px solid #e2e8f0;border-radius:.75rem;padding:.65rem .8rem;font-size:.875rem;background:white;outline:none}.input:focus{border-color:#8b5cf6;box-shadow:0 0 0 3px rgba(139,92,246,.1)}`}</style>
   </div>;
 };

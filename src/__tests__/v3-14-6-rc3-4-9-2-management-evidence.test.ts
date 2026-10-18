@@ -16,7 +16,8 @@ test("management screenshot validates type and size", () => {
 
 test("leave UI warns without proof and uploads before success/approval", () => {
   const form = source("src/components/LeaveRequestForm.tsx");
-  assert.match(form, /if \(!evidenceFile\)\s*\{\s*setEvidenceModalOpen\(true\)/);
+  assert.match(form, /if \(!staffDirect && !evidenceFile\)\s*\{\s*setEvidenceModalOpen\(true\)/);
+  assert.match(form, /submitStaffLeaveRequest\(payload,staffApproveNow,staffOralNote\)/);
   assert.match(form, /Harus upload bukti izin dari manajemen/);
   assert.match(form, /await repository\.uploadEvidence\(draft, file\);\s*await repository\.finalizeEvidence\(draft\);/);
   assert.match(form, /setPendingEvidenceDraft\(draft\)/);

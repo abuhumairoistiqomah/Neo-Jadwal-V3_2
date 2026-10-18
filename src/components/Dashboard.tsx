@@ -8,15 +8,21 @@ import {
 } from "../types";
 import { JAM_TIME_MAP } from "../constants/schedule";
 import { teachingSessionSignature } from "../domain/schedule/teachingSession";
+import { collectPriorityDuties, resolveDisplacedTeacher } from "../domain/schedule/dutyResolution";
 import { getTeacherUnavailableStatus } from "../domain/dashboardTeacherUnavailable";
 import type { SubstituteConstraint } from "../domain/substituteAvailability";
-import { buildDashboardEffectiveDay, getDashboardClassSlotItems, selectOperationalTeacherSchedules } from "../domain/schedule/dashboardEffectiveDay";
+import { buildDashboardEffectiveDay, getDashboardClassSlotItems, selectOperationalTeacherSchedules, type DashboardEffectiveItem } from "../domain/schedule/dashboardEffectiveDay";
 import { 
   Search, Calendar, CalendarDays, BookOpen, Clock, Users, UserPlus, GraduationCap,
   History, BarChart2, Shield, User, ChevronRight, X, Table, ChevronDown, Bell, Eye, EyeOff, AlertTriangle, ClipboardCheck, Pencil 
 } from "lucide-react";
 import { getSchoolTodayISO } from "../domain/date";
+import { EducationReminder } from "./EducationReminder";
 import { buildTaskRequestWhatsappMessage, findTeacherByName, whatsappDigits } from "../domain/whatsappTemplates";
+
+import { T, useLanguage } from '../i18n/LanguageProvider';
+import { localeIntl } from '../i18n/translations';
+
 
 interface DashboardProps {
   teachers: Teacher[];
@@ -29,6 +35,7 @@ interface DashboardProps {
   selectedTeacher: string;
   setSelectedTeacher: (name: string) => void;
   isAdmin: boolean;
+  calendarAuthEpoch?: number;
   onEditSchedule?: (items: ScheduleItem[], options?: { initialDate?: string }) => void;
   setPage: (page: ActivePage) => void;
 }
@@ -44,9 +51,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
   selectedTeacher,
   setSelectedTeacher,
   isAdmin,
+  calendarAuthEpoch,
   onEditSchedule,
   setPage,
 }) => {
+  const {t, language}=useLanguage();
   const [searchQuery, setSearchQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedDay, setSelectedDay] = useState<"Senin" | "Selasa" | "Rabu" | "Kamis" | "Jumat">("Senin");
@@ -211,6 +220,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
     kalenderAkademik,
   }), [selectedDate, schedules, jadwalInsidental, logs, kalenderAkademik]);
 
+  // A single dated duty projection drives both the displaced teacher's dashboard
+  // AND the primary teacher's Team Teaching badges (badal + incidentals).
+  const priorityDutiesForDay = useMemo(() => collectPriorityDuties({
+    date: selectedDate, effective: processedMasterSchedulesForDay, logs,
+  }), [selectedDate, processedMasterSchedulesForDay, logs]);
+
   // Formatted date string in Indonesian
   const formattedDateIndo = useMemo(() => {
     if (!selectedDate) return "";
@@ -227,6 +242,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
       year: "numeric"
     });
   }, [selectedDate]);
+
+  // Display-only localized date. Leave the Indonesian label above unchanged for
+  // existing WhatsApp templates and other business messages.
+  const formattedDateForUI = useMemo(() => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate)) return formattedDateIndo;
+    const [year, month, day] = selectedDate.split('-').map(Number);
+    const parsed = new Date(year, month - 1, day);
+    return Number.isNaN(parsed.getTime()) ? formattedDateIndo : parsed.toLocaleDateString(localeIntl(language), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  }, [selectedDate, formattedDateIndo, language]);
 
   // Compute effective daily class schedule for selectedClass on selectedDate
   const classTimetable = useMemo(() => {
@@ -448,19 +472,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   // Group regular schedule items by jam_ke
   const groupedSchedules = useMemo(() => {
-    const groups: Record<number, typeof teacherRegularSchedules> = {};
-    selectOperationalTeacherSchedules(teacherRegularSchedules).forEach(item => {
-      if (!groups[item.jam_ke]) {
-        groups[item.jam_ke] = [];
-      }
-      groups[item.jam_ke].push(item);
+    // Never merge unrelated duties merely because they share a JP. A teacher
+    // can be present in a normal lesson AND an incidental on that JP.
+    const groups: Record<string, typeof teacherRegularSchedules> = {};
+    selectOperationalTeacherSchedules(teacherRegularSchedules as DashboardEffectiveItem[]).forEach(item => {
+      const sessionKey = teachingSessionSignature(item);
+      const groupKey = `${Number(item.jam_ke)}::${sessionKey}`;
+      if (!groups[groupKey]) groups[groupKey] = [];
+      groups[groupKey].push(item);
     });
 
     return Object.keys(groups)
-      .map(Number)
-      .sort((a, b) => a - b)
-      .map(jamKe => {
-        const items = groups[jamKe];
+      .sort((a, b) => Number(a.split('::')[0]) - Number(b.split('::')[0]) || a.localeCompare(b))
+      .map(groupKey => {
+        const items = groups[groupKey];
+        const jamKe = Number(items[0].jam_ke);
         const first = items[0];
 
         const mapel = [...new Set(items.map(i => i.mapel))].filter(Boolean).join(", ");
@@ -583,6 +609,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
     const regularWithConflictFlags = groupedSchedules.map(reg => {
       const hasInvalConflict = invalJamSet.has(reg.jam_ke);
+      const displacementStatuses = reg.items.map((slot) => resolveDisplacedTeacher({
+        original: slot, teacherName: selectedTeacher, teacher: currentTeacherObj,
+        priorityDuties: priorityDutiesForDay,
+      }));
+      const transferredAssistant = displacementStatuses.length > 0 && displacementStatuses.every(
+        status => status?.kind === 'TRANSFERRED_ASSISTANT');
+      const dutyConflict = displacementStatuses.some(status =>
+        status?.kind === 'PRIMARY_CONFLICT' || status?.kind === 'MULTIPLE_HIGH_PRIORITY');
+      const transferDestination = displacementStatuses.find(status => status)?.destination;
       // Calendar cancellation belongs to the effective rows, not any other
       // class represented in the same teacher's JP group.
       const calEvent = reg.items.find((row) => row.isSuppressedByAcademicCalendar)?.academicEvent
@@ -597,7 +632,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
           constraints: substituteConstraints,
           logs,
         }),
-        isCancelledForInval: hasInvalConflict,
+        // A primary teacher with conflicting badal is NOT silently cancelled.
+        isCancelledForInval: transferredAssistant || (hasInvalConflict && !dutyConflict && displacementStatuses.every(status => status === null)),
+        transferDestination: transferredAssistant ? transferDestination : undefined,
+        dutyConflict,
         isCancelledForKalender: Boolean(calEvent),
         academicEvent: calEvent
       };
@@ -616,6 +654,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
           logs,
         }),
         isCancelledForInval: false,
+        transferDestination: undefined,
+        dutyConflict: false,
         isCancelledForKalender: Boolean(calEvent),
         academicEvent: calEvent
       };
@@ -633,7 +673,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       }
       return 0;
     });
-  }, [groupedSchedules, invalSchedules, selectedDate, kalenderAkademik, currentTeacherObj?.id, selectedTeacher, substituteConstraints, logs]);
+  }, [groupedSchedules, invalSchedules, selectedDate, kalenderAkademik, currentTeacherObj, selectedTeacher, substituteConstraints, logs, priorityDutiesForDay]);
 
   // Extract Wali kelas class name
   const waliClass = useMemo(() => {
@@ -755,6 +795,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* V3.16 independent 14-day agenda. Collapsed by default, never touches the timetable. */}
+      <EducationReminder key={`education-reminder-${calendarAuthEpoch || 0}`}
+        teachers={teachers} schedules={schedules} selectedTeacher={selectedTeacher}
+        today={getSchoolTodayISO()} authEpoch={calendarAuthEpoch}
+        onOpenCalendar={() => setPage("education-calendar")} />
       {/* Active Academic Calendar Notice Banner */}
       {mergedCalendarEventsToday.length > 0 && (
         <div className="bg-emerald-50/80 border border-emerald-300 rounded-2xl p-4 shadow-xs space-y-3 transition-all">
@@ -764,7 +809,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <CalendarDays className="w-4 h-4" />
               </div>
               <div>
-                <span className="text-emerald-900 font-extrabold">Informasi Kalender Akademik ({formattedDateIndo})</span>
+                <span className="text-emerald-900 font-extrabold">Informasi Kalender Akademik ({formattedDateForUI})</span>
                 <p className="text-xs text-emerald-700 font-medium">
                   Terdapat {mergedCalendarEventsToday.length} agenda/kegiatan pada tanggal ini
                 </p>
@@ -780,12 +825,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
               {showCalendarDetails ? (
                 <>
                   <EyeOff className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>Sembunyikan</span>
+                  <span><T>{"Sembunyikan"}</T></span>
                 </>
               ) : (
                 <>
                   <Eye className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>Tampilkan Detail</span>
+                  <span><T>{"Tampilkan Detail"}</T></span>
                 </>
               )}
             </button>
@@ -837,7 +882,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           }`}
         >
           <User className="w-5 h-5" />
-          <span>Dashboard Guru</span>
+          <span><T>{"Dashboard Guru"}</T></span>
         </button>
         <button
           id="tab-dashboard-wali-kelas"
@@ -863,9 +908,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
               <div className="flex-1">
                 <h3 className="font-extrabold text-amber-950 text-sm flex items-center gap-2 flex-wrap">
-                  <span>Warning Notifikasi Guru Ganti Hari Ini</span>
+                  <span><T>{"Warning Notifikasi Guru Ganti Hari Ini"}</T></span>
                   <span className="bg-amber-200 text-amber-900 text-xs px-2 py-0.5 rounded-full font-black">
-                    {waliLogsToday.length + pendampingLogsToday.length} Informasi
+                    {waliLogsToday.length + pendampingLogsToday.length} <T>{"Informasi"}</T>
                   </span>
                 </h3>
                 <p className="text-xs text-amber-800/90 font-medium mt-0.5">
@@ -882,7 +927,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               {showNotifications ? (
                 <>
                   <EyeOff className="w-4 h-4 text-amber-700" />
-                  <span>Sembunyikan Warning</span>
+                  <span><T>{"Sembunyikan Warning"}</T></span>
                 </>
               ) : (
                 <>
@@ -1024,7 +1069,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   </div>
                 </div>
                 <div className="text-xs bg-blue-100 text-blue-700 px-3 py-1.5 rounded-full font-medium">
-                  Guru Terpilih
+                  <T>{"Guru Terpilih"}</T>
                 </div>
               </div>
             )}
@@ -1037,17 +1082,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <div>
                   <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                     <Calendar className="w-5 h-5 text-blue-600" />
-                    Jadwal Hari Ini
+                    <T>{"Jadwal Hari Ini"}</T>
                   </h2>
                   <p className="text-sm text-slate-500">
-                    Menampilkan jadwal mengajar hari <span className="font-semibold text-blue-600">{selectedDay}</span>
+                    Menampilkan jadwal mengajar hari <span className="font-semibold text-blue-600">{t(selectedDay)}</span>
                   </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto">
                   {/* Date Picker */}
                   <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
-                    <span className="text-xs font-bold text-slate-500 uppercase">Tanggal:</span>
+                    <span className="text-xs font-bold text-slate-500 uppercase"><T>{"Tanggal:"}</T></span>
                     <input
                       id="dashboard-date-picker"
                       type="date"
@@ -1070,7 +1115,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             : "text-slate-500 hover:text-slate-800"
                         }`}
                       >
-                        {day}
+                        {t(day)}
                       </button>
                     ))}
                   </div>
@@ -1183,7 +1228,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           <div className="space-y-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className={`text-xs font-bold px-2.5 py-1 rounded-md ${badgeClass}`}>
-                                Jam Ke-{item.jam_ke}
+                                <T>{"Jam Ke-"}</T>{item.jam_ke}
                               </span>
                               <span className="text-sm font-medium opacity-85">
                                 {(() => {
@@ -1208,7 +1253,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                     🎉 {item.academicEvent.tipe}
                                   </span>
                                   <span className="text-xs font-semibold text-rose-600">
-                                    KBM Normal Ditiadakan
+                                    <T>{"KBM Normal Ditiadakan"}</T>
                                   </span>
                                 </div>
                                 {item.academicEvent.keterangan && (
@@ -1230,7 +1275,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             {/* Cancelled Banner if conflict with Inval */}
                             {item.isCancelledForInval && (
                               <p className="text-xs font-bold text-red-700 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg mt-1 w-fit shadow-2xs flex items-center gap-1.5">
-                                <span>❌ Dibatalkan. Utamakan tugas inval di jam ke-{item.jam_ke}.</span>
+                                <span>{item.transferDestination
+                                  ? `❌ Tugas pendampingan dibatalkan karena dialihkan pada JP${item.jam_ke}.`
+                                  : `❌ Dibatalkan. Utamakan tugas inval di jam ke-${item.jam_ke}.`}</span>
+                              </p>
+                            )}
+
+                            {item.transferDestination && !item.isInval && (
+                              <p className="text-xs font-bold text-red-800 bg-red-50 border border-red-200 px-3 py-2 rounded-lg mt-1 w-fit">
+                                Batal mendampingi. Dialihkan ke {item.transferDestination.kind === 'BADAL' ? 'badal' : 'tugas insidental'}
+                                {' '}{item.transferDestination.subject} di {item.transferDestination.className} (JP{item.transferDestination.period}).
+                              </p>
+                            )}
+                            {item.dutyConflict && !item.isInval && (
+                              <p className="text-xs font-bold text-red-800 bg-red-50 border border-red-300 px-3 py-2 rounded-lg mt-1 w-fit" role="alert">
+                                Konflik penugasan! Guru pengampu atau beberapa tugas prioritas beririsan. Perlu tindak lanjut manajemen.
                               </p>
                             )}
 
@@ -1238,7 +1297,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             {item.isInval && (
                               <div className="mt-1 space-y-1">
                                 <p className="text-xs font-bold text-amber-800 flex items-center gap-1.5 bg-white/90 border border-amber-200 px-3 py-1.5 rounded-lg w-fit shadow-2xs">
-                                  <span>Menggantikan: <strong>{item.guru_izin}</strong></span>
+                                  <span><T>{"Menggantikan:"}</T> <strong>{item.guru_izin}</strong></span>
                                   {item.alasan && <span className="text-xs text-amber-700 font-medium">({item.alasan})</span>}
                                 </p>
                                 {item.tugas ? (
@@ -1261,7 +1320,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                     <span className="text-[11px] font-bold text-amber-800 bg-amber-100 border border-amber-200 rounded-lg px-2.5 py-1.5">⚠ Tugas belum dikirim guru pengampu</span>
                                     {!isAdmin && selectedDate < getSchoolTodayISO() ? (
                                       <span className="text-[11px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1.5">
-                                        Kontak WA sudah kedaluwarsa
+                                        <T>{"Kontak WA sudah kedaluwarsa"}</T>
                                       </span>
                                     ) : (
                                       <button
@@ -1310,11 +1369,29 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                 return (
                                   <div className="mt-2.5 flex flex-wrap items-center gap-1.5 bg-white/60 border border-slate-200/50 px-3 py-1.5 rounded-lg text-xs">
                                     <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider block mr-1">Team Teaching:</span>
-                                    {otherTeachersList.map((tName, idx) => (
-                                      <span key={idx} className="bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md font-semibold shadow-2xs">
-                                        {tName}
-                                      </span>
-                                    ))}
+                                    {otherTeachersList.map((tName, idx) => {
+                                      const peer = teachers.find(t => t.nama.trim().toLowerCase() === tName.toLowerCase());
+                                      const status = item.items
+                                        .map(slot => resolveDisplacedTeacher({
+                                          original: slot, teacherName: tName, teacher: peer,
+                                          priorityDuties: priorityDutiesForDay,
+                                        }))
+                                        .find(Boolean);
+                                      const isTransfer = status?.kind === 'TRANSFERRED_ASSISTANT';
+                                      return (
+                                        <span key={idx} className="inline-flex flex-col gap-1">
+                                          <span className={`bg-white border px-2 py-0.5 rounded-md font-semibold shadow-2xs ${isTransfer ? 'line-through text-red-700 border-red-200' : 'border-slate-200 text-slate-700'}`}>
+                                            {tName}
+                                          </span>
+                                          {isTransfer && <span className="text-[10px] text-red-800 font-bold max-w-72" role="status">
+                                            Batal mendampingi; {status?.destination.kind === 'BADAL' ? 'badal' : 'tugas insidental'} {status?.destination.subject} di {status?.destination.className} (JP{status?.destination.period}).
+                                          </span>}
+                                          {status && !isTransfer && <span className="text-[10px] text-red-800 font-bold max-w-72" role="alert">
+                                            Konflik tugas: {status.destination.subject} di {status.destination.className}. Perlu pemeriksaan manajemen.
+                                          </span>}
+                                        </span>
+                                      );
+                                    })}
                                   </div>
                                 );
                               }
@@ -1344,7 +1421,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             </div>
                             {item.ruangan && (
                               <div>
-                                <span className="block text-[10px] uppercase font-bold opacity-60">Ruangan</span>
+                                <span className="block text-[10px] uppercase font-bold opacity-60"><T>{"Ruangan"}</T></span>
                                 <span className="font-semibold text-slate-800">📍 {getRoomDisplayName(item.ruangan, masterRuangan)}</span>
                                 {(() => {
                                   const resolved = resolveRoomInfo(item.ruangan, masterRuangan);
@@ -1364,15 +1441,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
               ) : (
                 <div className="py-8 text-center text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-xl">
                   <Clock className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                  <p className="font-medium text-slate-600">Tidak ada jadwal mengajar pada hari {selectedDay}</p>
-                  <p className="text-xs text-slate-400 mt-1">Hari ini adalah Jam Kosong (Free Period) bagi guru yang bersangkutan.</p>
+                  <p className="font-medium text-slate-600"><T>{"Tidak ada jadwal mengajar pada hari"}</T> {selectedDay}</p>
+                  <p className="text-xs text-slate-400 mt-1"><T>{"Hari ini adalah Jam Kosong (Free Period) bagi guru yang bersangkutan."}</T></p>
                 </div>
               )}
             </div>
           ) : (
             <div className="bg-white rounded-2xl border border-slate-200 p-8 shadow-sm text-center">
               <User className="w-12 h-12 text-blue-300 mx-auto mb-3" />
-              <h3 className="text-lg font-bold text-slate-800 mb-1">Informasi Jadwal Guru</h3>
+              <h3 className="text-lg font-bold text-slate-800 mb-1"><T>{"Informasi Jadwal Guru"}</T></h3>
               <p className="text-slate-500 text-sm max-w-md mx-auto">
                 Silakan cari dan pilih nama guru terlebih dahulu untuk memuat jadwal, list mata pelajaran, dan analisis jam kosong secara interaktif.
               </p>
@@ -1385,7 +1462,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
             <h2 className="text-xl font-semibold text-slate-800 mb-3 flex items-center gap-2">
               <Table className="w-5 h-5 text-blue-600" />
-              Pilih Kelas
+              <T>{"Pilih Kelas"}</T>
             </h2>
             <p className="text-sm text-slate-500 mb-4">
               Pilih kelas untuk menampilkan jadwal harian lengkap, wali kelas, pendamping kelas, dan urutan mata pelajaran per jam.
@@ -1417,7 +1494,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     WK
                   </div>
                   <div>
-                    <span className="block text-[10px] uppercase font-bold text-slate-400">Wali Kelas</span>
+                    <span className="block text-[10px] uppercase font-bold text-slate-400"><T>{"Wali Kelas"}</T></span>
                     <span className="font-bold text-slate-800 text-sm">
                       {teachers.find(t => isClassMatch(t.wali_kelas, selectedClass))?.nama || "Belum Ditentukan"}
                     </span>
@@ -1446,17 +1523,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <div>
                   <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                     <Calendar className="w-5 h-5 text-blue-600" />
-                    Jadwal Harian Kelas {selectedClass}
+                    <T>{"Jadwal Harian Kelas"}</T> {selectedClass}
                   </h2>
                   <p className="text-sm text-slate-500 mt-1">
-                    Menampilkan jadwal aktual: <span className="font-semibold text-blue-600">{formattedDateIndo || selectedDay}</span>
+                    Menampilkan jadwal aktual: <span className="font-semibold text-blue-600">{formattedDateForUI || t(selectedDay)}</span>
                   </p>
                 </div>
 
                 <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 w-full lg:w-auto">
                   {/* Date Picker Input */}
                   <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs">
-                    <span className="font-bold text-slate-600">Tanggal:</span>
+                    <span className="font-bold text-slate-600"><T>{"Tanggal:"}</T></span>
                     <input
                       type="date"
                       value={selectedDate}
@@ -1478,7 +1555,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             : "text-slate-500 hover:text-slate-800"
                         }`}
                       >
-                        {day}
+                        {t(day)}
                       </button>
                     ))}
                   </div>
@@ -1515,7 +1592,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           <div className="space-y-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-xs font-bold px-2.5 py-1 rounded-md bg-slate-200 text-slate-600 border border-slate-300">
-                                Jam Ke-{period.jam_ke}
+                                <T>{"Jam Ke-"}</T>{period.jam_ke}
                               </span>
                               <span className="text-sm font-medium text-slate-500">
                                 {timeLabel}
@@ -1553,7 +1630,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs font-bold px-2.5 py-1 rounded-md bg-white text-slate-800 border border-slate-200 shadow-2xs">
-                              Jam Ke-{period.jam_ke}
+                              <T>{"Jam Ke-"}</T>{period.jam_ke}
                             </span>
                             <span className="text-sm font-medium text-slate-700 bg-white/80 px-2.5 py-1 rounded-md border border-slate-200/60">
                               {timeLabel}
@@ -1608,7 +1685,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             <div className="flex flex-wrap items-center gap-4 text-xs">
                               {period.ruangan && (
                                 <div className="bg-white/80 px-2.5 py-1 rounded-md border border-slate-200">
-                                  <span className="font-bold text-slate-400 uppercase text-[9px] mr-1">Ruangan:</span>
+                                  <span className="font-bold text-slate-400 uppercase text-[9px] mr-1"><T>{"Ruangan:"}</T></span>
                                   <span className="font-bold text-slate-800">{getRoomDisplayName(period.ruangan, masterRuangan)}</span>
                                 </div>
                               )}
@@ -1626,7 +1703,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           {/* Active Teachers Display (Only for regular KBM) */}
                           {!period.isAcademicEvent && (
                             <div className="mt-2 flex flex-wrap items-center gap-1.5 bg-white/80 border border-slate-200/60 p-2 rounded-xl text-xs">
-                              <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider block mr-1">Guru Mengajar:</span>
+                              <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider block mr-1"><T>{"Guru Mengajar:"}</T></span>
                               {period.teachersStatus
                                 .filter(ts => !ts.isIzin)
                                 .map((ts, idx) => {
@@ -1636,7 +1713,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                         key={idx}
                                         className="px-2.5 py-1 rounded-lg font-bold shadow-2xs border bg-amber-100 text-amber-950 border-amber-300 flex items-center gap-1"
                                       >
-                                        👤 {ts.name} <span className="text-[10px] font-extrabold text-amber-800 bg-amber-200/80 px-1 rounded">(Pengganti)</span>
+                                        👤 {ts.name} <span className="text-[10px] font-extrabold text-amber-800 bg-amber-200/80 px-1 rounded"><T>{"(Pengganti)"}</T></span>
                                       </span>
                                     );
                                   }
@@ -1766,7 +1843,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           ) : (
             <div className="bg-white rounded-2xl border border-slate-200 p-8 shadow-sm text-center">
               <Users className="w-12 h-12 text-blue-300 mx-auto mb-3" />
-              <h3 className="text-lg font-bold text-slate-800 mb-1">Informasi Jadwal Kelas</h3>
+              <h3 className="text-lg font-bold text-slate-800 mb-1"><T>{"Informasi Jadwal Kelas"}</T></h3>
               <p className="text-slate-500 text-sm max-w-md mx-auto">
                 Silakan pilih kelas terlebih dahulu untuk memuat jadwal pelajaran harian lengkap.
               </p>
@@ -1777,7 +1854,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
       {/* Grid Menu Button */}
       <div>
-        <h3 className="text-base font-bold text-slate-400 uppercase tracking-wider mb-4">Navigasi Fitur Sistem</h3>
+        <h3 className="text-base font-bold text-slate-400 uppercase tracking-wider mb-4"><T>{"Navigasi Fitur Sistem"}</T></h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
 
           {/* Public teacher leave form — V3.12 */}
@@ -1792,10 +1869,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="space-y-1 pr-6 flex-1">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <h4 className="font-bold text-slate-800 group-hover:text-emerald-700 transition-colors">
-                  Ajukan Izin Mengajar
+                  <T>{"Ajukan Izin Mengajar"}</T>
                 </h4>
                 <span className="text-[9px] bg-emerald-200 text-emerald-800 font-bold px-1.5 py-0.5 rounded-md uppercase">
-                  Tanpa Login
+                  <T>{"Tanpa Login"}</T>
                 </span>
               </div>
               <p className="text-xs text-slate-500 leading-relaxed">
@@ -1816,7 +1893,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             <div className="space-y-1 pr-6 flex-1">
               <h4 className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">
-                Jadwal Pelajaran Lengkap
+                <T>{"Jadwal Pelajaran Lengkap"}</T>
               </h4>
               <p className="text-xs text-slate-500 leading-relaxed">
                 Menampilkan jadwal mengajar guru seminggu penuh (Senin - Jumat) dalam bentuk grid/card.
@@ -1836,7 +1913,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             <div className="space-y-1 pr-6 flex-1">
               <h4 className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">
-                Mata Pelajaran Diampu
+                <T>{"Mata Pelajaran Diampu"}</T>
               </h4>
               <p className="text-xs text-slate-500 leading-relaxed">
                 Daftar mata pelajaran yang diajar, kelas, dan jumlah Jam Pelajaran (JP) dengan fitur sorting.
@@ -1856,7 +1933,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             <div className="space-y-1 pr-6 flex-1">
               <h4 className="font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
-                Guru Pengampu per Kelas
+                <T>{"Guru Pengampu per Kelas"}</T>
               </h4>
               <p className="text-xs text-slate-500 leading-relaxed">
                 Filter per kelas untuk melihat setiap guru pengampu, mata pelajaran, jadwal, dan alokasi JP.
@@ -1876,7 +1953,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             <div className="space-y-1 pr-6 flex-1">
               <h4 className="font-bold text-slate-800 group-hover:text-amber-600 transition-colors">
-                Jam Kosong Individu
+                <T>{"Jam Kosong Individu"}</T>
               </h4>
               <p className="text-xs text-slate-500 leading-relaxed">
                 Melihat slot waktu mengajar kosong untuk guru terpilih guna penjadwalan mandiri.
@@ -1907,7 +1984,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 leading-relaxed">
-                    Peta ketersediaan (matrix tabel) ketersediaan jam kosong seluruh guru per hari.
+                    <T>{"Peta ketersediaan (matrix tabel) ketersediaan jam kosong seluruh guru per hari."}</T>
                   </p>
                 </div>
                 <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-hover:text-blue-600 group-hover:translate-x-1 transition-all" />

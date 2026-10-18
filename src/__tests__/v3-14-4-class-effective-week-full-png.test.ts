@@ -30,8 +30,8 @@ test("Jadwal Kelas exposes master/effective-week modes and full-width PNG export
   const app = fs.readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
   const dashboard = fs.readFileSync(new URL("../components/Dashboard.tsx", import.meta.url), "utf8");
 
-  assert.match(classPage, /Jadwal Asli/);
-  assert.match(classPage, /Minggu Ini/);
+  assert.match(classPage, /Jadwal Normal/);
+  assert.match(classPage, /Jadwal Insidental/);
   assert.match(classPage, /buildClassWeekMap/);
   assert.match(classPage, /data-export-expand-scroll="true"/);
   assert.match(classPage, /Jadwal_Kelas_\$\{selectedClass\.replace/);

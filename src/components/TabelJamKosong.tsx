@@ -6,6 +6,8 @@ import {
   BookOpen, Clock, AlertCircle, Sparkles
 } from "lucide-react";
 
+import { T } from '../i18n/LanguageProvider';
+
 interface TabelJamKosongProps {
   teachers: Teacher[];
   schedules: ScheduleItem[];
@@ -110,7 +112,7 @@ export const TabelJamKosong: React.FC<TabelJamKosongProps> = ({
           className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-indigo-600 bg-white px-4 py-2 rounded-xl border border-gray-100 hover:border-indigo-100 shadow-sm transition-all self-start"
         >
           <ArrowLeft className="w-4 h-4" />
-          Kembali ke Dashboard
+          <T>{"Kembali ke Dashboard"}</T>
         </button>
 
         <span className="text-sm font-medium text-gray-400">Peta Ketersediaan Guru Berdasarkan Jam Pelajaran</span>
@@ -181,7 +183,7 @@ export const TabelJamKosong: React.FC<TabelJamKosongProps> = ({
             </div>
             <div>
               <div className="text-[10px] text-emerald-600 font-bold uppercase tracking-wider">Total Jam Kosong</div>
-              <div className="text-xl font-black text-emerald-950 mt-0.5">{stats.totalFreeSlots} <span className="text-xs font-normal">JP</span></div>
+              <div className="text-xl font-black text-emerald-950 mt-0.5">{stats.totalFreeSlots} <span className="text-xs font-normal"><T>{"JP"}</T></span></div>
             </div>
           </div>
 
@@ -191,7 +193,7 @@ export const TabelJamKosong: React.FC<TabelJamKosongProps> = ({
             </div>
             <div>
               <div className="text-[10px] text-red-600 font-bold uppercase tracking-wider">Total Mengajar</div>
-              <div className="text-xl font-black text-red-950 mt-0.5">{stats.totalTeachingSlots} <span className="text-xs font-normal">JP</span></div>
+              <div className="text-xl font-black text-red-950 mt-0.5">{stats.totalTeachingSlots} <span className="text-xs font-normal"><T>{"JP"}</T></span></div>
             </div>
           </div>
 
@@ -240,10 +242,10 @@ export const TabelJamKosong: React.FC<TabelJamKosongProps> = ({
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider">
                 <th id="th-empty-no" className="p-4 text-center w-12">No</th>
-                <th id="th-empty-guru" className="p-4 min-w-[200px]">Nama Guru</th>
+                <th id="th-empty-guru" className="p-4 min-w-[200px]"><T>{"Nama Guru"}</T></th>
                 {JAM_LIST.map(jam => (
                   <th key={jam} id={`th-empty-jam-${jam}`} className="p-4 text-center min-w-[120px] border-l border-gray-100">
-                    Jam Ke-{jam}
+                    <T>{"Jam Ke-"}</T>{jam}
                   </th>
                 ))}
               </tr>

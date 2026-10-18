@@ -11,6 +11,7 @@ import {
   type OperationalClassRow,
 } from "../infrastructure/repositories/operationalRulesRepository";
 
+import { T } from '../i18n/LanguageProvider';
 interface Props {
   onBack?: () => void;
   onChanged?: () => void | Promise<void>;
@@ -164,7 +165,7 @@ export const AcademicCalendarAdmin: React.FC<Props> = ({ onBack, onChanged }) =>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 mb-2"><ArrowLeft className="w-4 h-4" /> Kembali</button>
-          <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2"><CalendarDays className="w-7 h-7 text-teal-600" /> Kalender Akademik</h1>
+          <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2"><CalendarDays className="w-7 h-7 text-teal-600" /> <T>{"Kalender Akademik"}</T></h1>
           <p className="text-sm text-slate-500 mt-1">Libur, outing class, kegiatan, atau perubahan KBM per kelas. Data langsung memengaruhi jadwal efektif di seluruh E-Jadwal.</p>
         </div>
         <button disabled={loading} onClick={() => void load()} className="px-4 py-2.5 rounded-xl bg-slate-900 text-white font-bold text-sm flex items-center gap-2 disabled:opacity-50"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /> Refresh</button>

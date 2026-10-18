@@ -9,6 +9,7 @@ import { formatOperationalError } from "../domain/formatOperationalError";
 import { getCurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
 import { ScheduleAdminRepository, type ScheduleAdminContext } from "../infrastructure/repositories/scheduleAdminRepository";
 
+import { T } from '../i18n/LanguageProvider';
 interface Props {
   date: string;
   period: number;
@@ -170,7 +171,7 @@ export const WeeklyRoomEditor: React.FC<Props> = ({
             {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800">{error}</div>}
             {message && <p className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">{message}</p>}
             <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
-              <button onClick={onClose} disabled={busy} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold">Batal</button>
+              <button onClick={onClose} disabled={busy} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold"><T>{"Batal"}</T></button>
               <button onClick={() => void save()} disabled={busy || targetOccupied.length > 0 || (mode === "MOVE" && !selected)} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-black text-white disabled:opacity-40">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Simpan untuk tanggal ini</button>
             </div>
           </div>

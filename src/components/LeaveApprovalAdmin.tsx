@@ -18,11 +18,11 @@ import {
   Copy,
 } from "lucide-react";
 import {
-  buildBadalProcessingUrl,
   groupWaitingBadalRows,
   summarizeLeaveRequest,
   type LeaveReviewRequest,
   type WaitingCoverageRow,
+  type WaitingBadalSession,
 } from "../domain/leaveApproval";
 import {
   getCurrentUserContext,
@@ -32,12 +32,26 @@ import {
 } from "../infrastructure/auth/supabaseAuthRepository";
 import { SupabaseLeaveApprovalRepository } from "../infrastructure/repositories/supabaseLeaveApprovalRepository";
 import { isSupabaseConfigured } from "../infrastructure/supabase/client";
-import type { Teacher } from "../domain/models";
+import type { Teacher, ScheduleItem, LogIzinItem, JadwalInsidentalItem, KalenderAkademikItem, MasterRuanganItem } from "../domain/models";
+import type { SubstituteConstraint } from "../domain/substituteAvailability";
+import type { InvalWriteMetadata } from "../domain/inval/invalWrite";
+import { matchApprovedWaitingAssignments } from "../domain/inval/approvedLeaveSelection";
+import { InputGuruPengganti } from "./InputGuruPengganti";
+import { SupabaseInvalWriteRepository } from "../infrastructure/repositories/supabaseInvalWriteRepository";
 import { buildDeclineLeaveWhatsappMessage, buildLeaveReviewWhatsappMessage, findTeacherByName } from "../domain/whatsappTemplates";
 import { getSchoolTodayISO } from "../domain/date";
 
+import { T } from '../i18n/LanguageProvider';
+
 interface LeaveApprovalAdminProps {
   teachers?: Teacher[];
+  schedules?: ScheduleItem[];
+  logs?: LogIzinItem[];
+  jadwalInsidental?: JadwalInsidentalItem[];
+  kalenderAkademik?: KalenderAkademikItem[];
+  masterRuangan?: MasterRuanganItem[];
+  substituteConstraints?: SubstituteConstraint[];
+  onChanged?: () => Promise<void> | void;
   onBack?: () => void;
 }
 
@@ -59,8 +73,14 @@ function formatSubmittedAt(value: string): string {
   }
 }
 
-export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({ teachers = [], onBack }) => {
+export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({
+  teachers = [], schedules = [], logs = [], jadwalInsidental = [], kalenderAkademik = [],
+  masterRuangan = [], substituteConstraints = [], onChanged, onBack,
+}) => {
   const repository = useMemo(() => new SupabaseLeaveApprovalRepository(), []);
+  const assignmentRepository = useMemo(() => new SupabaseInvalWriteRepository(), []);
+  const [activeWaitingSession, setActiveWaitingSession] = useState<WaitingBadalSession | null>(null);
+  const [savingWaiting, setSavingWaiting] = useState(false);
   const [userContext, setUserContext] = useState<CurrentUserContext | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -165,6 +185,7 @@ export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({ teachers
       setUserContext(null);
       setRequests([]);
       setWaitingRows([]);
+      setActiveWaitingSession(null);
       setMessage("Session Supabase ditutup.");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -249,6 +270,46 @@ export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({ teachers
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setDecidingId(null);
+    }
+  };
+
+  // Reuse the same smart substitute recommender as official-duty restrictions.
+  // The WAITING coverage identities are authoritative; never create another leave.
+  const saveWaitingBadal = async (newLogs: Omit<LogIzinItem, "id">[], _room?: unknown, metadata?: InvalWriteMetadata) => {
+    if (!activeWaitingSession || !isStaff || savingWaiting) throw new Error("Sesi izin tidak aktif atau penyimpanan sedang berlangsung.");
+    const session = activeWaitingSession;
+    const freshWaiting = await repository.listWaitingCoverage(1000);
+    const assignments = matchApprovedWaitingAssignments(session, freshWaiting, newLogs);
+    const resolved = assignments.map((entry) => {
+      const teacher = teachers.find((person) => person.nama.trim().toLocaleLowerCase("id-ID") === entry.substituteName.trim().toLocaleLowerCase("id-ID"));
+      if (!teacher?.id || teacher.id === session.absentTeacherId) {
+        throw new Error(`Guru badal tidak ditemukan atau tidak boleh dipilih: ${entry.substituteName}`);
+      }
+      return { ...entry, teacherId: teacher.id };
+    });
+    setSavingWaiting(true);
+    let saved = 0;
+    try {
+      for (const entry of resolved) {
+        await assignmentRepository.replaceSubstitute({
+          coverageSlotId: entry.coverageSlotId,
+          substituteTeacherId: entry.teacherId,
+          constraintIds: metadata?.constraintOverrideIdsByRow?.[entry.inputIndex] ?? [],
+          overrideNote: metadata?.overrideNote || "Penugasan dari Waiting List Persetujuan Izin",
+        });
+        saved++;
+      }
+      setActiveWaitingSession(null);
+      setMessage(`${session.requestCode}: ${saved} kelas sudah mendapat guru badal. Tugas izin dan histori tetap tersimpan.`);
+      await loadData();
+      await onChanged?.();
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      // This RPC writes per coverage slot; report partial success explicitly.
+      await loadData().catch(() => {});
+      throw new Error(`${saved}/${resolved.length} kelas sempat tersimpan. Tutup dan refresh Waiting List sebelum mencoba lagi. ${detail}`);
+    } finally {
+      setSavingWaiting(false);
     }
   };
 
@@ -394,7 +455,7 @@ export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({ teachers
                         return (
                           <div key={period.id} className={`rounded-xl border p-3 ${period.periodType === "TEACHING" ? "border-indigo-200 bg-indigo-50/60" : "border-sky-200 bg-sky-50/60"}`}>
                             <div className="flex items-center justify-between gap-2">
-                              <span className="font-black text-sm">JP {period.period}</span>
+                              <span className="font-black text-sm"><T>{"JP"}</T> {period.period}</span>
                               <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${period.periodType === "TEACHING" ? "bg-indigo-200 text-indigo-900" : "bg-sky-200 text-sky-900"}`}>{period.periodType}</span>
                             </div>
                             {period.periodType === "TEACHING" ? (
@@ -467,11 +528,11 @@ export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({ teachers
                     <div className="flex items-center gap-2 flex-wrap">
                       {session.requestCode && <span className="font-mono text-[10px] font-black bg-slate-100 px-2 py-1 rounded-lg">{session.requestCode}</span>}
                       <span className="text-[10px] font-black bg-amber-100 text-amber-800 px-2 py-1 rounded-lg">WAITING</span>
-                      {session.isCombinedSession && <span className="text-[10px] font-black bg-violet-100 text-violet-800 px-2 py-1 rounded-lg">KELAS GABUNG • {session.classCodes.length} KELAS</span>}
+                      {session.isCombinedSession && <span className="text-[10px] font-black bg-violet-100 text-violet-800 px-2 py-1 rounded-lg">KELAS GABUNG • {session.classCodes.length} <T>{"KELAS"}</T></span>}
                     </div>
                     <div className="font-black text-slate-900 mt-2">{session.absentTeacherName}</div>
                     <div className="text-sm text-slate-700 mt-0.5 flex items-center gap-2 flex-wrap">
-                      <span>{formatDate(session.scheduleDate)}</span><span>•</span><span className="font-bold">JP {session.period}</span><span>•</span><span>{session.classLabel}</span>
+                      <span>{formatDate(session.scheduleDate)}</span><span>•</span><span className="font-bold"><T>{"JP"}</T> {session.period}</span><span>•</span><span>{session.classLabel}</span>
                     </div>
                     <div className="text-xs text-slate-500 mt-1">{session.subject || "Mata pelajaran"} • {session.reason || "Izin"}</div>
                     {(session.taskText || session.taskUrls.length > 0) ? (
@@ -487,20 +548,51 @@ export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({ teachers
                     )}
                     <div className="text-[10px] text-slate-400 mt-1">Database: {session.coverageSlotIds.length} coverage row{session.coverageSlotIds.length > 1 ? "s" : ""}</div>
                   </div>
-                  <a
-                    href={buildBadalProcessingUrl(session)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Buka pengisian guru pengganti di tab baru; halaman persetujuan tetap terbuka"
+                  <button
+                    type="button"
+                    onClick={() => { setActiveWaitingSession(session); setError(""); }}
+                    title="Buka pemilih badal pintar tanpa meninggalkan halaman Persetujuan Izin"
                     className="shrink-0 px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm flex items-center justify-center gap-2"
                   >
-                    <Clock3 className="w-4 h-4" /> Proses Badal ↗
-                  </a>
+                    <Clock3 className="w-4 h-4" /> Proses Badal
+                  </button>
                 </div>
               ))}
             </div>
           </section>
         </>
+      )}
+      {activeWaitingSession && (
+        <div className="fixed inset-0 z-[80] bg-slate-950/70 p-2 sm:p-5 overflow-y-auto" role="dialog" aria-modal="true" aria-label="Pemilihan Badal Pintar dari Persetujuan Izin">
+          <div className="max-w-6xl mx-auto bg-slate-50 rounded-2xl shadow-2xl p-3 sm:p-6 my-2">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4 mb-4">
+              <div>
+                <h2 className="text-lg font-black">Pemilihan Guru Badal Pintar • Izin Disetujui</h2>
+                <p className="text-sm text-slate-600">{activeWaitingSession.absentTeacherName} • {activeWaitingSession.requestCode} • {formatDate(activeWaitingSession.scheduleDate)}</p>
+                <p className="text-sm font-bold text-indigo-800"><T>{"JP"}</T> {activeWaitingSession.period} • {activeWaitingSession.classLabel} • {activeWaitingSession.subject}</p>
+              </div>
+              <button type="button" disabled={savingWaiting} onClick={() => setActiveWaitingSession(null)} className="flex items-center gap-2 border rounded-lg bg-white px-3 py-2 text-sm font-bold disabled:opacity-50">Tutup</button>
+            </div>
+            <InputGuruPengganti
+              key={activeWaitingSession.key}
+              teachers={teachers}
+              schedules={schedules}
+              logs={logs}
+              jadwalInsidental={jadwalInsidental}
+              kalenderAkademik={kalenderAkademik}
+              masterRuangan={masterRuangan}
+              substituteConstraints={substituteConstraints}
+              initialDate={activeWaitingSession.scheduleDate}
+              initialTeacherName={activeWaitingSession.absentTeacherName}
+              initialPeriods={[activeWaitingSession.period]}
+              initialReason={activeWaitingSession.reason || "Izin"}
+              approvedWaitingSession={activeWaitingSession}
+              taskOwnership="LEAVE_TEACHER"
+              onAddLogs={saveWaitingBadal}
+              onBack={() => setActiveWaitingSession(null)}
+            />
+          </div>
+        </div>
       )}
       {declineHandoff && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">

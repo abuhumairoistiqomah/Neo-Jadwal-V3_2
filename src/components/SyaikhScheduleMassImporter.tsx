@@ -23,6 +23,8 @@ import { getCurrentUserContext } from "../infrastructure/auth/supabaseAuthReposi
 import { explainSyaikhPublishError, isSyaikhTeacherConflictRequired } from "../domain/syaikhRotationPublishErrors";
 import { SyaikhAlternatingLegacyImporter } from "./SyaikhAlternatingLegacyImporter";
 
+import { T } from '../i18n/LanguageProvider';
+
 interface Props {
   schedules: ScheduleItem[];
   incidentals: JadwalInsidentalItem[];
@@ -274,7 +276,7 @@ export const SyaikhScheduleMassImporter: React.FC<Props> = ({ schedules, inciden
 
           <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 p-5"><div><h2 className="font-black text-slate-900">Preview Incidentals</h2><p className="text-xs text-slate-500">Menampilkan maksimum 150 baris pertama. Publish tetap memproses seluruh batch.</p></div><span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">{parsedSource.sourceFile} • {parsedSource.sourceSheet}</span></div>
-            <div className="max-h-[520px] overflow-auto"><table className="min-w-full text-left text-xs"><thead className="sticky top-0 bg-slate-100 text-slate-600"><tr><th className="p-3">Tanggal</th><th className="p-3">Kelas</th><th className="p-3">JP</th><th className="p-3">Status</th><th className="p-3">Mapel</th><th className="p-3">Guru Effective</th></tr></thead><tbody className="divide-y divide-slate-100">{resolution.rows.slice(0, 150).map((row, index) => <tr key={`${row.groupKey}-${row.classId}-${index}`}><td className="p-3 font-bold whitespace-nowrap">{row.scheduleDate}</td><td className="p-3">{row.className}{row.isCombined ? <span className="ml-1 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">GABUNG</span> : null}</td><td className="p-3 font-black">JP{row.period}</td><td className="p-3"><span className={`rounded-lg px-2 py-1 font-black ${row.rotationStatus === "NATIVE" ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>{row.rotationStatus}</span></td><td className="p-3">{row.subject}</td><td className="p-3">{row.teacherNames.join(" + ")}</td></tr>)}</tbody></table></div>
+            <div className="max-h-[520px] overflow-auto"><table className="min-w-full text-left text-xs"><thead className="sticky top-0 bg-slate-100 text-slate-600"><tr><th className="p-3"><T>{"Tanggal"}</T></th><th className="p-3">Kelas</th><th className="p-3"><T>{"JP"}</T></th><th className="p-3">Status</th><th className="p-3"><T>{"Mapel"}</T></th><th className="p-3">Guru Effective</th></tr></thead><tbody className="divide-y divide-slate-100">{resolution.rows.slice(0, 150).map((row, index) => <tr key={`${row.groupKey}-${row.classId}-${index}`}><td className="p-3 font-bold whitespace-nowrap">{row.scheduleDate}</td><td className="p-3">{row.className}{row.isCombined ? <span className="ml-1 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">GABUNG</span> : null}</td><td className="p-3 font-black"><T>{"JP"}</T>{row.period}</td><td className="p-3"><span className={`rounded-lg px-2 py-1 font-black ${row.rotationStatus === "NATIVE" ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>{row.rotationStatus}</span></td><td className="p-3">{row.subject}</td><td className="p-3">{row.teacherNames.join(" + ")}</td></tr>)}</tbody></table></div>
           </section>
 
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-5">

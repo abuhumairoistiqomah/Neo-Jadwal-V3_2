@@ -12,6 +12,8 @@ import {
   ChevronDown, ChevronUp, Lock, Upload, Paperclip, Link2
 } from "lucide-react";
 import { JAM_TIME_MAP, RECOMMENDED_WEEKLY_JP_LIMIT } from "../constants/schedule";
+import { loadApprovedLeavePeriodsForDate } from "../infrastructure/repositories/approvedLeaveAvailabilityRepository";
+import type { ApprovedLeavePeriodAvailability } from "../domain/inval/recommendationPerformance";
 import { buildEffectiveScheduleForDate } from "../domain/schedule/effectiveSchedule";
 import { genderPreferenceRank, type GenderPreference } from "../domain/classGender";
 import { resolveNormalTeachingBlock, type SubstituteAvailabilityStatus, type SubstituteConstraint } from "../domain/substituteAvailability";
@@ -25,6 +27,12 @@ import {
   normalizeTeacherKey,
 } from "../domain/inval/recommendationPerformance";
 import { expandInvalSessionRowsForPersistence, groupInvalScheduleItems } from "../domain/inval/sessionGrouping";
+import { scopeInvalRowsToOfficialDuty, coversExactlyOfficialDutySlots } from "../domain/inval/officialDutySelection";
+import { buildApprovedLeaveOperatorRows } from "../domain/inval/approvedLeaveSelection";
+import type { WaitingBadalSession } from "../domain/leaveApproval";
+
+import { T } from '../i18n/LanguageProvider';
+
 
 interface InputGuruPenggantiProps {
   teachers: Teacher[];
@@ -39,6 +47,10 @@ interface InputGuruPenggantiProps {
   initialTeacherName?: string;
   initialPeriods?: number[];
   initialReason?: string;
+  /** Locks this existing smart recommender to uncovered official-duty coverage slots. */
+  officialDutySlots?: ReadonlyArray<{ period: number; className: string }>;
+  /** Locks the smart picker to already-approved LEAVE_WORKFLOW WAITING rows. */
+  approvedWaitingSession?: WaitingBadalSession;
   taskOwnership?: "OPERATOR" | "LEAVE_TEACHER";
   onUploadTaskFile?: (file: File, context: { scheduleDate: string; period: number; classLabel: string; subject: string }) => Promise<InvalTaskResourceInput>;
   onAddLogs: (
@@ -250,21 +262,21 @@ const CandidateSelectDropdown: React.FC<CandidateSelectDropdownProps> = React.me
         <div className="text-[11px] text-slate-600 flex flex-wrap items-center gap-x-2 gap-y-1 bg-slate-50 p-1.5 rounded-md border border-slate-200/80 w-full">
           <div className="shrink-0">
             <span className="text-slate-500 font-medium">Beban Hari Ini:</span>{" "}
-            <strong className="text-slate-900 font-bold">{dl.jpEfektif} JP</strong>
+            <strong className="text-slate-900 font-bold">{dl.jpEfektif} <T>{"JP"}</T></strong>
           </div>
           <div className="text-slate-300 shrink-0">|</div>
           <div className="shrink-0">
-            <span className="text-slate-500 font-medium">Beban Minggu Ini:</span>{" "}
-            <strong className="text-slate-900 font-bold">{wl.jpAsli} JP</strong>
+            <span className="text-slate-500 font-medium"><T>{"Beban Minggu Ini:"}</T></span>{" "}
+            <strong className="text-slate-900 font-bold">{wl.jpAsli} <T>{"JP"}</T></strong>
             <span className="text-slate-500 text-[10px] ml-1">
-              ({wl.jpKalender > 0 ? `-${wl.jpKalender} kal, ` : ""}-{wl.jpIzin} izn, +{wl.jpBadal} bdl = <strong className="text-slate-800 font-bold">{wl.jpEfektif} JP</strong>)
+              ({wl.jpKalender > 0 ? `-${wl.jpKalender} kal, ` : ""}-{wl.jpIzin} izn, +{wl.jpBadal} bdl = <strong className="text-slate-800 font-bold">{wl.jpEfektif} <T>{"JP"}</T></strong>)
             </span>
           </div>
           <div className="text-slate-300 shrink-0">|</div>
           <div className="shrink-0">
             <span className="text-indigo-700 font-bold">Proyeksi:</span>{" "}
             <strong className={isOverload ? "text-amber-800 font-extrabold" : "text-emerald-700 font-extrabold"}>
-              Hari {dl.projectedJP} JP • Mggu {wl.projectedJP} JP
+              Hari {dl.projectedJP} JP • Mggu {wl.projectedJP} <T>{"JP"}</T>
             </strong>
           </div>
         </div>
@@ -306,19 +318,19 @@ const CandidateSelectDropdown: React.FC<CandidateSelectDropdownProps> = React.me
                 {selectedCandidate.teacher.nama}
               </span>
               <span className="text-[10px] bg-emerald-100 text-emerald-800 font-extrabold px-2 py-0.5 rounded-full border border-emerald-200 shrink-0">
-                Terpilih
+                <T>{"Terpilih"}</T>
               </span>
               <span className="text-xs text-gray-500 font-medium">
                 [Mapel: {selectedCandidate.teacher.mapel_utama}]
               </span>
             </div>
             <div className="text-[11px] font-semibold text-slate-600 flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span>Beban Hari Ini: <strong className="text-slate-900">{selectedCandidate.dailyLoad.jpEfektif} JP</strong></span>
+              <span>Beban Hari Ini: <strong className="text-slate-900">{selectedCandidate.dailyLoad.jpEfektif} <T>{"JP"}</T></strong></span>
               <span className="text-slate-300">•</span>
-              <span>Beban Minggu Ini: <strong className="text-slate-900">{selectedCandidate.weeklyLoad.jpEfektif} JP</strong></span>
+              <span><T>{"Beban Minggu Ini:"}</T> <strong className="text-slate-900">{selectedCandidate.weeklyLoad.jpEfektif} <T>{"JP"}</T></strong></span>
               <span className="text-slate-300">•</span>
               <span className="text-indigo-700 font-bold">
-                Proyeksi: Hari {selectedCandidate.dailyLoad.projectedJP} JP • Mggu {selectedCandidate.weeklyLoad.projectedJP} JP
+                Proyeksi: Hari {selectedCandidate.dailyLoad.projectedJP} JP • Mggu {selectedCandidate.weeklyLoad.projectedJP} <T>{"JP"}</T>
               </span>
             </div>
           </div>
@@ -458,6 +470,8 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
   initialTeacherName,
   initialPeriods = [],
   initialReason,
+  officialDutySlots,
+  approvedWaitingSession,
   taskOwnership = "OPERATOR",
   onUploadTaskFile,
   onAddLogs,
@@ -727,12 +741,29 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
 
   // V3.11.1 performance indexes. These are rebuilt only when schedule/log inputs change,
   // never when the user types into the per-JP task textarea.
+  const [approvedPeriodQuery, setApprovedPeriodQuery] = React.useState<{
+    date: string; periods: ApprovedLeavePeriodAvailability[]; error: string | null;
+  } | null>(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    setApprovedPeriodQuery(null);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) return;
+    loadApprovedLeavePeriodsForDate(tanggal).then(periods => {
+      if (!cancelled) setApprovedPeriodQuery({date:tanggal, periods, error:null});
+    }).catch(err => {
+      if (!cancelled) setApprovedPeriodQuery({date:tanggal, periods:[], error:err instanceof Error ? err.message : String(err)});
+    });
+    return () => { cancelled = true; };
+  }, [tanggal]);
+  const approvedPeriodsReady = approvedPeriodQuery?.date === tanggal && !approvedPeriodQuery.error;
+
   const recommendationDayIndex = useMemo(() => buildInvalRecommendationDayIndex({
     teachers,
     effectiveSchedulesForDate,
     logs,
     date: tanggal,
-  }), [teachers, effectiveSchedulesForDate, logs, tanggal]);
+    approvedLeavePeriods: approvedPeriodQuery?.date === tanggal ? approvedPeriodQuery.periods : [],
+  }), [teachers, effectiveSchedulesForDate, logs, tanggal, approvedPeriodQuery]);
 
   // Recommendation invalidation intentionally excludes `tugas`. This is the key
   // optimization that keeps free-text typing from re-running the 99-teacher ranker.
@@ -881,12 +912,30 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
       setErrorMessage("Silakan pilih Guru yang Izin terlebih dahulu.");
       return;
     }
-    if (selectedHours.length === 0) {
-      setErrorMessage("Pilih minimal satu Jam Pelajaran (Jam Ke-) untuk digantikan.");
+    const hours = approvedWaitingSession ? [approvedWaitingSession.period] : officialDutySlots
+      ? [...new Set<number>(officialDutySlots.map((slot) => Number(slot.period)))].sort((a: number, b: number) => a - b)
+      : selectedHours;
+    if (hours.length === 0) {
+      setErrorMessage("Tidak ada slot yang belum mendapatkan badal.");
       return;
     }
 
     setErrorMessage("");
+
+    if (approvedWaitingSession) {
+      if (tanggal !== approvedWaitingSession.scheduleDate ||
+          guruIzin.trim().toLocaleLowerCase("id-ID") !== approvedWaitingSession.absentTeacherName.trim().toLocaleLowerCase("id-ID")) {
+        setErrorMessage("Guru atau tanggal tidak sesuai dengan Waiting List Badal.");
+        return;
+      }
+      try {
+        setGeneratedRows(buildApprovedLeaveOperatorRows(approvedWaitingSession));
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : String(error));
+        setGeneratedRows([]);
+      }
+      return;
+    }
 
     const teacherSchedules = effectiveSchedulesForDate.filter(
       s => [s.guru1, s.guru2, s.guru3, s.guru4, s.guru5, s.guru6].some(
@@ -910,7 +959,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
       return parts.join("\n").trim();
     };
 
-    const rows = selectedHours.flatMap(hour => {
+    const rows = hours.flatMap(hour => {
       const matchingScheds = teacherSchedules.filter(s => Number(s.jam_ke) === Number(hour));
       const grouped = groupInvalScheduleItems(matchingScheds);
 
@@ -951,13 +1000,33 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
       }];
     });
 
-    if (rows.length === 0) {
-      setErrorMessage("JP yang dipilih adalah jam free/tidak memiliki kelas aktif. JP free dicatat melalui Form Izin untuk statistik dan tidak membutuhkan badal.");
+    // Reuse the same recommendation engine, but constrain its generated rows
+    // to the specifically uncovered class/JP slots of this restriction.
+    const scopedRows = officialDutySlots ? scopeInvalRowsToOfficialDuty(rows, officialDutySlots) : rows;
+    // JP0 might not exist as a master row. Generate only the specifically
+    // requested homeroom classes, not one synthetic combined class label.
+    if (officialDutySlots?.some((slot) => slot.period === 0)) {
+      const present = new Set(scopedRows.flatMap((row) => row.targetSlots.map((slot) =>
+        `${row.jam_ke}|${slot.kelas.trim().toLocaleLowerCase("id-ID")}`)));
+      for (const slot of officialDutySlots.filter((entry) => entry.period === 0)) {
+        if (present.has(`0|${slot.className.trim().toLocaleLowerCase("id-ID")}`)) continue;
+        scopedRows.push({
+          jam_ke: 0, kelas: slot.className, mapel: "JP-0 (Homeroom)",
+          recommendationClassLabel: slot.className,
+          targetSlots: [{ kelas: slot.className, mapel: "JP-0 (Homeroom)" }],
+          isCombinedGroup: false, selectedPengganti: "", tugas: "", taskResources: [], constraintOverrideIds: [],
+        });
+      }
+    }
+    if (scopedRows.length === 0 || (officialDutySlots && !coversExactlyOfficialDutySlots(scopedRows, officialDutySlots))) {
+      setErrorMessage(officialDutySlots
+        ? "Sebagian kelas/JP tugas resmi tidak cocok dengan jadwal efektif. Periksa tanggal dan restriksi sebelum menyimpan."
+        : "JP yang dipilih adalah jam free/tidak memiliki kelas aktif. JP free dicatat melalui Form Izin untuk statistik dan tidak membutuhkan badal.");
       setGeneratedRows([]);
       return;
     }
 
-    setGeneratedRows(rows);
+    setGeneratedRows(scopedRows);
   };
 
   // ALGORITMA REKOMENDASI PENGGANTI (Sangat Penting)
@@ -1031,7 +1100,8 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
 
       const isPendampingOnDay = dayStats?.isPendampingOnDay || false;
       const isBusy = dayStats?.busyPeriods.has(Number(jam_ke)) || false;
-      const isAbsentAtPeriod = absentJamKeByTeacher.get(normCandName)?.has(Number(jam_ke)) || false;
+      // Fail closed until the authoritative approved-period read succeeds.
+      const isAbsentAtPeriod = !approvedPeriodsReady || (absentJamKeByTeacher.get(normCandName)?.has(Number(jam_ke)) || false);
 
       const daily = teacherDailyLoads.get(normCandName) || { jpAsli: 0, jpKalender: 0, jpIzin: 0, jpBadal: 0, jpEfektif: 0 };
       const weekly = teacherWeeklyLoads.get(normCandName) || { jpAsli: 0, jpKalender: 0, jpIzin: 0, jpBadal: 0, jpEfektif: 0 };
@@ -1422,6 +1492,19 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
   // Submit and save replacement logs
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!approvedPeriodsReady) {
+      setErrorMessage(approvedPeriodQuery?.error || 'Sedang memuat status izin APPROVED. Tunggu hingga verifikasi selesai.');
+      return;
+    }
+    const selectedAbsent = generatedRows.find(row => {
+      const teacher = teachers.find(t=>normalizeTeacherKey(t.nama) === normalizeTeacherKey(row.selectedPengganti));
+      return teacher && recommendationDayIndex.absentJamKeByTeacher
+        .get(normalizeTeacherKey(teacher.nama))?.has(Number(row.jam_ke));
+    });
+    if (selectedAbsent) {
+      setErrorMessage(`Guru pengganti pada JP${selectedAbsent.jam_ke} sedang izin APPROVED. Silakan pilih kandidat lain.`);
+      return;
+    }
 
     if (readOnlyPreview) {
       setErrorMessage("Shadow preview V3.10 bersifat read-only. Simpan badal belum dipindahkan ke Supabase pada checkpoint ini.");
@@ -1534,12 +1617,12 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
           className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-indigo-600 bg-white px-4 py-2 rounded-xl border border-gray-100 hover:border-indigo-100 shadow-sm transition-all self-start"
         >
           <ArrowLeft className="w-4 h-4" />
-          Kembali ke Dashboard
+          {officialDutySlots ? "Kembali ke Aturan Guru Badal" : approvedWaitingSession ? "Kembali ke Persetujuan Izin" : "Kembali ke Dashboard"}
         </button>
 
         <span className="text-sm font-semibold text-gray-400 flex items-center gap-1.5">
           <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
-          Penjadwalan Guru Pengganti Pintar
+          {officialDutySlots ? "Pemilihan Badal • Tugas Resmi Sekolah" : approvedWaitingSession ? "Pemilihan Badal • Pengajuan Izin" : "Penjadwalan Guru Pengganti Pintar"}
         </span>
       </div>
 
@@ -1548,7 +1631,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
         <div className="mb-6 pb-6 border-b border-gray-50">
           <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
             <UserCheck className="w-5 h-5 text-indigo-500" />
-            Input Guru Pengganti (Inval)
+            {officialDutySlots ? "Tentukan Badal • Tugas Resmi Sekolah" : approvedWaitingSession ? "Tentukan Badal • Izin Disetujui" : "Input Guru Pengganti (Inval)"}
           </h2>
           <p className="text-sm text-gray-500 mt-1">
             Gunakan asisten pintar ini untuk menjadwalkan guru pengganti yang paling relevan berdasarkan data jadwal harian dan prioritas bidang.
@@ -1559,6 +1642,11 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
             </div>
           )}
         </div>
+
+        {!approvedPeriodsReady && <div role="alert" className="mb-4 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs font-bold text-rose-900">
+          {approvedPeriodQuery?.error || 'Memverifikasi periode izin APPROVED termasuk JP FREE…'}
+          {' '}Penyimpanan badal dikunci sampai verifikasi berhasil.
+        </div>}
 
         {/* Feedback Messages */}
         {errorMessage && (
@@ -1575,6 +1663,14 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
           </div>
         )}
 
+        {officialDutySlots && <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900 mb-5">
+          <strong>Penugasan Resmi Sekolah.</strong> Tanggal, guru, alasan restriksi, dan slot terkunci.
+          Rekomendasi gender, konflik harian, dan beban mingguan memakai mesin Input Inval yang sama.
+          Penyimpanan dilakukan sebagai OFFICIAL_DUTY, bukan izin pribadi.
+        </div>}
+        {approvedWaitingSession && <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900 mb-5">
+          <strong>Badal Pengajuan Izin {approvedWaitingSession.requestCode}.</strong> Guru, tanggal, JP, dan kelas dikunci sesuai Waiting List. Rekomendasi gender, jadwal harian, dan beban mingguan tetap aktif. Tugas guru izin hanya dapat dilihat, tidak diubah.
+        </div>}
         {/* Step 1: Input Permohonan Form */}
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1587,9 +1683,11 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
               </label>
               <input
                 id="input-tanggal-izin"
+                disabled={Boolean(officialDutySlots || approvedWaitingSession)}
                 type="date"
                 value={tanggal}
                 onChange={(e) => {
+                  if (officialDutySlots || approvedWaitingSession) return;
                   setTanggal(e.target.value);
                   setGeneratedRows([]); // reset generated rows to enforce regenerate
                 }}
@@ -1605,12 +1703,13 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
             <div className="space-y-2 relative">
               <label className="block text-sm font-bold text-gray-700 flex items-center gap-1.5">
                 <UserCheck className="w-4 h-4 text-gray-400" />
-                Guru yang Izin
+                {officialDutySlots ? "Guru dengan Restriksi" : "Guru yang Izin"}
               </label>
               
               <div className="relative">
                 <input
                   id="input-guru-izin-search"
+                  disabled={Boolean(officialDutySlots || approvedWaitingSession)}
                   type="text"
                   placeholder="Ketik nama guru atau mata pelajaran..."
                   value={searchTeacherQuery}
@@ -1639,7 +1738,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                 {/* Status indicator badge inside the textbox */}
                 {guruIzin && (
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-md">
-                    Terpilih
+                    <T>{"Terpilih"}</T>
                   </span>
                 )}
               </div>
@@ -1713,6 +1812,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                 type="text"
                 placeholder="Contoh: Sakit (Demam), Dinas Luar ke LPMP, Cuti Bersalin..."
                 value={alasan}
+                readOnly={Boolean(officialDutySlots || approvedWaitingSession)}
                 onChange={(e) => setAlasan(e.target.value)}
                 className="w-full bg-gray-50 hover:bg-gray-100/50 focus:bg-white text-gray-800 border border-gray-200 focus:border-indigo-500 rounded-xl p-3 focus:outline-none transition-all text-sm font-medium"
                 required
@@ -1723,9 +1823,9 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
             <div className="space-y-2 md:col-span-2">
               <div className="flex justify-between items-center">
                 <label className="block text-sm font-bold text-gray-700">
-                  Pilih Sesi Jam Pelajaran yang Kosong
+                  {officialDutySlots ? "JP Tugas Resmi yang Butuh Badal (terkunci)" : approvedWaitingSession ? "JP Pengajuan Izin (terkunci)" : "Pilih Sesi Jam Pelajaran yang Kosong"}
                 </label>
-                <button
+                {!officialDutySlots && !approvedWaitingSession && <button
                   type="button"
                   id="toggle-select-all-hours"
                   onClick={handleSelectAllHours}
@@ -1733,7 +1833,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                 >
                   <CheckSquare className="w-3.5 h-3.5" />
                   {selectedHours.length === 7 ? "Deselect All" : "Select All"}
-                </button>
+                </button>}
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5 pt-1">
@@ -1802,6 +1902,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                   } else if (normalTeachingBlock.blocked && (status === "mengajar" || status === "mendamping")) {
                     status = "izin";
                     statusLabel = `× Izin${classText ? ` (${classText})` : ""}`;
+                    if (officialDutySlots) statusLabel = statusLabel.replace("× Izin", "× Tugas Resmi");
                     const reason = normalTeachingBlock.matchingConstraints.map((item) => item.reason).filter(Boolean).join(", ");
                     if (reason) statusLabel += ` • ${reason}`;
                     statusClass = "text-rose-600 font-black";
@@ -1817,7 +1918,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                     <label 
                       key={hour}
                       className={`p-2.5 border rounded-xl flex flex-col justify-between cursor-pointer transition-all ${
-                        selectedHours.includes(hour)
+                        (approvedWaitingSession ? approvedWaitingSession.period === hour : officialDutySlots ? officialDutySlots.some((slot) => slot.period === hour) : selectedHours.includes(hour))
                           ? "bg-indigo-50 border-indigo-300 text-indigo-900 shadow-sm"
                           : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
                       }`}
@@ -1830,7 +1931,8 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                           id={`hour-check-${hour}`}
                           type="checkbox"
                           className="accent-indigo-600 w-4 h-4"
-                          checked={selectedHours.includes(hour)}
+                          checked={approvedWaitingSession ? approvedWaitingSession.period === hour : officialDutySlots ? officialDutySlots.some((slot) => slot.period === hour) : selectedHours.includes(hour)}
+                          disabled={Boolean(officialDutySlots || approvedWaitingSession)}
                           onChange={() => {
                             handleHourToggle(hour);
                             setGeneratedRows([]);
@@ -1859,7 +1961,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
               className="w-full sm:w-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-colors flex items-center justify-center gap-2 text-sm"
             >
               <Plus className="w-4 h-4" />
-              Generate Baris Pengganti
+              {officialDutySlots ? "Analisis Kebutuhan Badal" : approvedWaitingSession ? "Analisis Badal Pengajuan Izin" : "Generate Baris Pengganti"}
             </button>
           </div>
 
@@ -1908,7 +2010,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                           <h4 className="font-bold text-gray-800 text-base">{row.mapel}</h4>
                           {row.targetSlots.length > 1 && (
                             <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
-                              KELAS GABUNG • {row.targetSlots.length} KELAS
+                              KELAS GABUNG • {row.targetSlots.length} <T>{"KELAS"}</T>
                             </span>
                           )}
                         </div>
@@ -1958,14 +2060,14 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                                       <div>
                                         <span className="text-slate-500 font-bold">Beban Hari Terpilih: </span>
                                         <span className="font-extrabold text-slate-900 bg-white/90 px-2 py-0.5 rounded border border-slate-200">
-                                          {dl.jpEfektif} JP
+                                          {dl.jpEfektif} <T>{"JP"}</T>
                                         </span>
                                       </div>
                                       <div className="text-slate-300 hidden sm:inline">|</div>
                                       <div>
-                                        <span className="text-slate-500 font-bold">Beban Minggu Ini: </span>
+                                        <span className="text-slate-500 font-bold"><T>{"Beban Minggu Ini:"}</T> </span>
                                         <span className="font-extrabold text-slate-900 bg-white/90 px-2 py-0.5 rounded border border-slate-200">
-                                          {wl.jpAsli} JP | -{wl.jpIzin} izin | +{wl.jpBadal} badal = {wl.jpEfektif} JP
+                                          {wl.jpAsli} JP | -{wl.jpIzin} izin | +{wl.jpBadal} badal = {wl.jpEfektif} <T>{"JP"}</T>
                                         </span>
                                       </div>
                                     </div>
@@ -1975,15 +2077,15 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                                     {isOverload ? (
                                       <div className="space-y-0.5">
                                         <span className="font-extrabold text-amber-900 bg-amber-200/90 px-2.5 py-1 rounded-lg border border-amber-400 inline-flex items-center gap-1">
-                                          ⚠️ Jika dipilih → Hari: {dl.projectedJP} JP • Minggu: {wl.projectedJP} JP
+                                          ⚠️ Jika dipilih → Hari: {dl.projectedJP} JP • Minggu: {wl.projectedJP} <T>{"JP"}</T>
                                         </span>
                                         <div className="text-[10px] font-bold text-amber-800">
-                                          Melebihi batas {RECOMMENDED_WEEKLY_JP_LIMIT} JP
+                                          Melebihi batas {RECOMMENDED_WEEKLY_JP_LIMIT} <T>{"JP"}</T>
                                         </div>
                                       </div>
                                     ) : (
                                       <span className="font-extrabold text-emerald-800 bg-emerald-100/90 px-2.5 py-1 rounded-lg border border-emerald-300 inline-block">
-                                        Jika dipilih → Hari: {dl.projectedJP} JP • Minggu: {wl.projectedJP} JP
+                                        Jika dipilih → Hari: {dl.projectedJP} JP • Minggu: {wl.projectedJP} <T>{"JP"}</T>
                                       </span>
                                     )}
                                   </div>
@@ -2017,14 +2119,14 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                                       <div>
                                         <span className="text-slate-500 font-bold">Beban Hari Terpilih: </span>
                                         <span className="font-extrabold text-slate-900 bg-gray-50 px-2 py-0.5 rounded border border-gray-200">
-                                          {dl.jpEfektif} JP
+                                          {dl.jpEfektif} <T>{"JP"}</T>
                                         </span>
                                       </div>
                                       <div className="text-slate-300 hidden sm:inline">|</div>
                                       <div>
-                                        <span className="text-slate-500 font-bold">Beban Minggu Ini: </span>
+                                        <span className="text-slate-500 font-bold"><T>{"Beban Minggu Ini:"}</T> </span>
                                         <span className="font-extrabold text-slate-900 bg-gray-50 px-2 py-0.5 rounded border border-gray-200">
-                                          {wl.jpAsli} JP | -{wl.jpIzin} izin | +{wl.jpBadal} badal = {wl.jpEfektif} JP
+                                          {wl.jpAsli} JP | -{wl.jpIzin} izin | +{wl.jpBadal} badal = {wl.jpEfektif} <T>{"JP"}</T>
                                         </span>
                                       </div>
                                     </div>
@@ -2034,13 +2136,13 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                                     {isOverload ? (
                                       <div className="space-y-0.5">
                                         <span className="font-extrabold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-lg border border-amber-300 inline-block">
-                                          ⚠️ Jika dipilih → Hari: {dl.projectedJP} JP • Minggu: {wl.projectedJP} JP
+                                          ⚠️ Jika dipilih → Hari: {dl.projectedJP} JP • Minggu: {wl.projectedJP} <T>{"JP"}</T>
                                         </span>
-                                        <div className="text-[10px] font-bold text-amber-700">Melebihi batas {RECOMMENDED_WEEKLY_JP_LIMIT} JP</div>
+                                        <div className="text-[10px] font-bold text-amber-700">Melebihi batas {RECOMMENDED_WEEKLY_JP_LIMIT} <T>{"JP"}</T></div>
                                       </div>
                                     ) : (
                                       <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 inline-block">
-                                        Jika dipilih → Hari: {dl.projectedJP} JP • Minggu: {wl.projectedJP} JP
+                                        Jika dipilih → Hari: {dl.projectedJP} JP • Minggu: {wl.projectedJP} <T>{"JP"}</T>
                                       </span>
                                     )}
                                   </div>
@@ -2087,7 +2189,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                         </div>
 
                         {/* Per-JP Task / Material Link input field */}
-                        <div className="mt-2.5">
+                        {!officialDutySlots && <div className="mt-2.5">
                           <label className="block text-[11px] font-bold text-gray-500 mb-1">
                             📌 {taskOwnership === "LEAVE_TEACHER" ? "Tugas dari Guru Izin" : "Tugas / Link Materi"} ({row.jam_ke === 0 ? "JP-0" : `Jam Ke-${row.jam_ke}`}):
                           </label>
@@ -2147,7 +2249,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                               </span>
                             ))}
                           </div>
-                        </div>
+                        </div>}
                       </div>
 
                     </div>
@@ -2156,7 +2258,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
               </div>
 
               {/* Optional Room Relocation Card */}
-              <div className="bg-amber-50/60 border border-amber-200/80 rounded-2xl p-5 space-y-4">
+              {!officialDutySlots && !approvedWaitingSession && <div className="bg-amber-50/60 border border-amber-200/80 rounded-2xl p-5 space-y-4">
                 <div className="flex items-center justify-between">
                   <label className="flex items-center gap-2.5 cursor-pointer">
                     <input
@@ -2308,18 +2410,18 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                     )}
                   </div>
                 )}
-              </div>
+              </div>}
 
               {/* Submit Button */}
               <div className="pt-4 border-t border-gray-50 flex justify-end">
                 <button
                   type="submit"
                   id="submit-replacement-logs"
-                  disabled={readOnlyPreview || isSubmitting}
+                  disabled={readOnlyPreview || isSubmitting || !approvedPeriodsReady}
                   className="w-full sm:w-auto px-6 py-3.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow-md transition-colors flex items-center justify-center gap-2 text-sm"
                 >
                   <Save className="w-4 h-4" />
-                  {readOnlyPreview ? "Write Dikunci di Shadow Mode" : isSubmitting ? "Menyimpan ke Supabase..." : "Simpan Log Pengganti"}
+                  {readOnlyPreview ? "Write Dikunci di Shadow Mode" : isSubmitting ? "Menyimpan ke Supabase..." : officialDutySlots ? "Simpan Badal Tugas Resmi" : approvedWaitingSession ? "Simpan Badal Pengajuan Izin" : "Simpan Log Pengganti"}
                 </button>
               </div>
 
@@ -2379,7 +2481,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                 <div className="bg-white border border-indigo-200/80 rounded-lg p-2.5 shadow-2xs text-left sm:text-right">
                   <span className="text-[10px] uppercase tracking-wider font-bold text-indigo-500 block">Target Badal:</span>
                   <div className="text-xs font-bold text-slate-800">
-                    JP {verificationScheduleDetail.targetJamKe === 0 ? "0 (Homeroom)" : verificationScheduleDetail.targetJamKe} • {verificationScheduleDetail.targetKelas}
+                    <T>{"JP"}</T> {verificationScheduleDetail.targetJamKe === 0 ? "0 (Homeroom)" : verificationScheduleDetail.targetJamKe} • {verificationScheduleDetail.targetKelas}
                   </div>
                   <div className="text-[11px] font-semibold text-slate-600">
                     {verificationScheduleDetail.targetMapel}

@@ -26,6 +26,7 @@ import { getSchoolTodayISO } from "../domain/date";
 import { ManagementAnalyticsRepository } from "../infrastructure/repositories/managementAnalyticsRepository";
 import { getErrorMessage } from "../domain/errorMessage";
 
+import { T } from '../i18n/LanguageProvider';
 interface ManagementAnalyticsProps {
   onBack: () => void;
 }
@@ -167,10 +168,10 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
             onClick={onBack}
             className="mb-4 inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-700"
           >
-            <ArrowLeft className="h-4 w-4" /> Kembali ke Dashboard
+            <ArrowLeft className="h-4 w-4" /> <T>{"Kembali ke Dashboard"}</T>
           </button>
           <h1 className="flex items-center gap-2 text-2xl font-black tracking-tight text-slate-900">
-            <BarChart3 className="h-7 w-7 text-indigo-600" /> Management Analytics
+            <BarChart3 className="h-7 w-7 text-indigo-600" /> <T>{"Management Analytics"}</T>
           </h1>
           <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-500">
             Ringkasan manajemen untuk izin, JP kehadiran, badal, kesiapan tugas, dan beban operasional guru. Kelas gabung dihitung sebagai satu unit badal per guru/tanggal/JP.

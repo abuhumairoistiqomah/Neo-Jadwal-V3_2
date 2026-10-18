@@ -5,6 +5,7 @@ import {
   Activity, Heart, AlertCircle, CalendarRange, Filter, RotateCcw, Calendar 
 } from "lucide-react";
 
+import { T } from '../i18n/LanguageProvider';
 interface StatistikGuruPenggantiProps {
   logs: LogIzinItem[];
   onBack: () => void;
@@ -177,7 +178,7 @@ export const StatistikGuruPengganti: React.FC<StatistikGuruPenggantiProps> = ({
           className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-indigo-600 bg-white px-4 py-2 rounded-xl border border-gray-100 hover:border-indigo-100 shadow-sm transition-all self-start cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
-          Kembali ke Dashboard
+          <T>{"Kembali ke Dashboard"}</T>
         </button>
 
         <span className="text-sm font-semibold text-gray-400 flex items-center gap-1.5">
@@ -317,7 +318,7 @@ export const StatistikGuruPengganti: React.FC<StatistikGuruPenggantiProps> = ({
           </div>
           <div>
             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Total JP Tergantikan</span>
-            <span className="text-3xl font-black text-indigo-600 mt-1 block">{totalJPReplaced} JP</span>
+            <span className="text-3xl font-black text-indigo-600 mt-1 block">{totalJPReplaced} <T>{"JP"}</T></span>
             <span className="text-[11px] text-gray-400 font-semibold block mt-0.5">
               {isFiltered ? "Periode Terfilter" : "Semester Berjalan"}
             </span>
@@ -386,7 +387,7 @@ export const StatistikGuruPengganti: React.FC<StatistikGuruPenggantiProps> = ({
                         </span>
                         <span className="font-bold text-gray-700 truncate max-w-[200px] sm:max-w-xs">{hero.nama}</span>
                       </div>
-                      <span className="font-black text-emerald-600 shrink-0">{hero.count} JP</span>
+                      <span className="font-black text-emerald-600 shrink-0">{hero.count} <T>{"JP"}</T></span>
                     </div>
                     {/* Visual Meter bar */}
                     <div className="h-2 w-full bg-gray-50 rounded-full overflow-hidden">
@@ -429,7 +430,7 @@ export const StatistikGuruPengganti: React.FC<StatistikGuruPenggantiProps> = ({
                         </span>
                         <span className="font-bold text-gray-700 truncate max-w-[200px] sm:max-w-xs">{item.nama}</span>
                       </div>
-                      <span className="font-black text-rose-600 shrink-0">{item.count} JP</span>
+                      <span className="font-black text-rose-600 shrink-0">{item.count} <T>{"JP"}</T></span>
                     </div>
                     {/* Visual Meter bar */}
                     <div className="h-2 w-full bg-gray-50 rounded-full overflow-hidden">

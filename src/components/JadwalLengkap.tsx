@@ -1,16 +1,26 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
+import type { JadwalInsidentalItem, KalenderAkademikItem, LogIzinItem } from "../domain/models";
+import { buildTeacherWeeklyView, teacherWeekDays, type TeacherWeekRow, type TeacherWeeklyMode } from "../domain/schedule/teacherWeeklyView";
+import { getSchoolTodayISO } from "../domain/date";
 import { isGrade1Or2 } from "../domain/class";
 import { Teacher, ScheduleItem, MasterRuanganItem, getRoomDisplayName, normalizeDay, checkIsITBA, isITBACoreSubject, isAlQuranOrTahsin } from "../types";
-import { ArrowLeft, BookOpen, AlertCircle, HelpCircle, Search, X, Clock, User, Calendar, GraduationCap, Users, Download, Loader2 } from "lucide-react";
+import { ArrowLeft, BookOpen, AlertCircle, HelpCircle, Search, X, Clock, User, Calendar, GraduationCap, Users, Download, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { downloadElementAsPng } from "../infrastructure/browser/exportElementJpeg";
 import { getErrorMessage } from "../domain/errorMessage";
 import { compactClassLabel, compactSubjectLabel } from "../domain/schedule/displayLabels";
 import { JAM_TIME_MAP, SCHOOL_DAYS as HARI_LIST, TEACHING_JPS as JAM_LIST } from "../constants/schedule";
 
+import { T, useLanguage } from '../i18n/LanguageProvider';
+import { displaySchoolWeekRange } from '../i18n/translations';
+
 interface JadwalLengkapProps {
   teachers: Teacher[];
   schedules: ScheduleItem[];
   masterRuangan?: MasterRuanganItem[];
+  incidentals?: JadwalInsidentalItem[];
+  logs?: LogIzinItem[];
+  kalenderAkademik?: KalenderAkademikItem[];
+  schoolToday?: string;
   selectedTeacher: string;
   setSelectedTeacher: (name: string) => void;
   onBack: () => void;
@@ -21,11 +31,20 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
   teachers,
   schedules,
   masterRuangan = [],
+  incidentals = [],
+  logs = [],
+  kalenderAkademik = [],
+  schoolToday = getSchoolTodayISO(),
   selectedTeacher,
   setSelectedTeacher,
   onBack,
 }) => {
+  const {t,language} = useLanguage();
   const [searchQuery, setSearchQuery] = useState("");
+  const [scheduleMode, setScheduleMode] = useState<TeacherWeeklyMode>("EFFECTIVE");
+  const [weekOffset, setWeekOffset] = useState(0);
+  const weekDays = useMemo(() => teacherWeekDays(schoolToday, weekOffset), [schoolToday, weekOffset]);
+  const weekRange = displaySchoolWeekRange(weekDays[0].dateStr, weekDays[4].dateStr, language);
   const [isDownloadingTeacherPng, setIsDownloadingTeacherPng] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState<{
@@ -40,25 +59,26 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
   } | null>(null);
 
   // Filter teachers for search inside this view
-  const filteredTeachers = searchQuery.trim() === ""
+  const filteredTeachers = useMemo(() => searchQuery.trim() === ""
     ? []
-    : teachers.filter(t => t.nama.toLowerCase().includes(searchQuery.toLowerCase()));
+    : teachers.filter(t => t.nama.toLowerCase().includes(searchQuery.toLowerCase())),
+  [searchQuery, teachers]);
 
   // Active teacher
   const currentTeacher = teachers.find(t => t.nama === selectedTeacher);
   const isITBA = currentTeacher ? checkIsITBA(currentTeacher) : false;
 
-  // Filter schedules
-  const teacherSchedules = schedules.filter(s => 
-    [s.guru1, s.guru2, s.guru3, s.guru4, s.guru5, s.guru6].some(
-      g => g && g.trim().toLowerCase() === selectedTeacher.trim().toLowerCase()
-    )
-  );
+  // MASTER never receives dated overrides. EFFECTIVE is derived from the canonical
+  // dated schedule engine and uses the same weekend/week selection as Jadwal Ruangan.
+  const teacherSchedules: TeacherWeekRow[] = useMemo(() => buildTeacherWeeklyView({
+    teacher: selectedTeacher, mode: scheduleMode, weekDays,
+    schedules, incidentals, logs, calendar: kalenderAkademik,
+  }), [selectedTeacher, scheduleMode, weekDays, schedules, incidentals, logs, kalenderAkademik]);
 
   // Total JP (Jumlah Jam Pelajaran) in a week (counting unique slots as 1 JP)
   const uniqueSlots = new Set<string>();
   teacherSchedules.forEach(item => {
-    uniqueSlots.add(`${normalizeDay(item.hari)}-${item.jam_ke}`);
+    if (!["IZIN", "TUGAS_RESMI", "KALENDER"].includes(item.weekStatus)) uniqueSlots.add(`${normalizeDay(item.hari)}-${item.jam_ke}`);
   });
   const totalJP = uniqueSlots.size;
 
@@ -115,7 +135,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
       heading.textContent = "WEEKLY TEACHER TIMETABLE";
       heading.style.cssText = "font-size:28px;line-height:1.3;font-weight:900;color:#1e293b;margin:8px 0 3px";
       const context = document.createElement("p");
-      context.textContent = "JADWAL ASLI / MASTER MINGGUAN";
+      context.textContent = scheduleMode === "MASTER" ? "JADWAL NORMAL / MASTER MINGGUAN" : `JADWAL EFEKTIF • ${weekRange}`;
       context.style.cssText = "font-size:12px;font-weight:700;color:#64748b;letter-spacing:1px;margin:0";
       schoolHeader.append(schoolName, heading, context);
       staging.appendChild(schoolHeader);
@@ -160,7 +180,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
       document.body.appendChild(exportHost);
 
       const safeName = selectedTeacher.trim().replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_").slice(0, 100);
-      await downloadElementAsPng(staging, `Jadwal_Guru_${safeName}.png`);
+      await downloadElementAsPng(staging, `Jadwal_Guru_${safeName}_${scheduleMode === "MASTER" ? "Normal" : `Insidental_${weekDays[0].dateStr}`}.png`);
     } catch (error) {
       console.error("Gagal mengunduh PNG jadwal guru:", error);
       alert(`Gagal mengunduh PNG jadwal guru. ${getErrorMessage(error, "Silakan coba lagi.")}`);
@@ -180,11 +200,11 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
           className="flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-blue-600 bg-white px-4 py-2 rounded-xl border border-slate-200 hover:border-blue-100 shadow-sm transition-all self-start"
         >
           <ArrowLeft className="w-4 h-4" />
-          Kembali ke Dashboard
+          <T>{"Kembali ke Dashboard"}</T>
         </button>
 
         <div className="flex items-center gap-2 text-sm font-medium text-slate-400">
-          <span>Jadwal Pelajaran Lengkap</span>
+          <span><T>{"Jadwal Pelajaran Lengkap"}</T></span>
         </div>
       </div>
 
@@ -195,10 +215,10 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
           <div>
             <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
               <BookOpen className="w-5 h-5 text-blue-600" />
-              Jadwal Pelajaran Mingguan
+              <T>{"Jadwal Pelajaran Mingguan"}</T>
             </h2>
             <p className="text-sm text-slate-500 mt-1">
-              Gunakan bilah di samping untuk mengganti guru yang sedang ditinjau.
+              <T>{"Gunakan bilah di samping untuk mengganti guru yang sedang ditinjau."}</T>
             </p>
           </div>
 
@@ -241,6 +261,19 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
 
         {selectedTeacher ? (
           <div className="space-y-6">
+            <div className="rounded-2xl border border-blue-100 bg-blue-50/40 p-4 space-y-3">
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Mode jadwal guru">
+                <button type="button" onClick={() => setScheduleMode("MASTER")} aria-pressed={scheduleMode === "MASTER"} className={`rounded-xl px-4 py-2 text-sm font-bold ${scheduleMode === "MASTER" ? "bg-blue-600 text-white" : "bg-white text-slate-600 border border-slate-200"}`}>Jadwal Normal</button>
+                <button type="button" onClick={() => setScheduleMode("EFFECTIVE")} aria-pressed={scheduleMode === "EFFECTIVE"} className={`rounded-xl px-4 py-2 text-sm font-bold ${scheduleMode === "EFFECTIVE" ? "bg-blue-600 text-white" : "bg-white text-slate-600 border border-slate-200"}`}><T>{"Jadwal Insidental"}</T></button>
+              </div>
+              {scheduleMode === "EFFECTIVE" && <div className="flex flex-wrap items-center gap-3">
+                <button type="button" onClick={() => setWeekOffset((value) => value - 1)} className="rounded-xl border border-slate-200 bg-white p-2" aria-label="Minggu sebelumnya"><ChevronLeft className="w-5 h-5" /></button>
+                <span className="text-sm font-black text-slate-800" aria-live="polite">{weekRange}</span>
+                <button type="button" onClick={() => setWeekOffset((value) => value + 1)} className="rounded-xl border border-slate-200 bg-white p-2" aria-label="Minggu berikutnya"><ChevronRight className="w-5 h-5" /></button>
+                <button type="button" onClick={() => setWeekOffset(0)} className="text-xs font-bold text-blue-700 hover:underline"><T>{"Minggu default"}</T></button>
+                <span className="text-xs text-slate-500"><T>{"Sabtu/Minggu otomatis menampilkan minggu depan • Zona Jakarta"}</T></span>
+              </div>}
+            </div>
             {/* Teacher Header and JP summary */}
             <div id="teacher-timetable-summary" className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-5 bg-slate-50 rounded-2xl gap-4">
               <div>
@@ -253,13 +286,13 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                   )}
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  Mata Pelajaran Utama: {currentTeacher?.mapel_utama || "Tidak terdaftar"} | Rumpun: {currentTeacher?.rumpun || "-"}
+                  <T>{"Mata Pelajaran Utama:"}</T> {currentTeacher?.mapel_utama || "Tidak terdaftar"} | Rumpun: {currentTeacher?.rumpun || "-"}
                 </p>
               </div>
 
               <div className="bg-blue-600 text-white px-5 py-3 rounded-xl shadow-sm text-center min-w-[120px]">
-                <span className="block text-[10px] uppercase font-bold text-blue-200 tracking-wider">Total Beban</span>
-                <span className="text-2xl font-black">{totalJP} JP</span>
+                <span className="block text-[10px] uppercase font-bold text-blue-200 tracking-wider"><T>{"Total Beban"}</T></span>
+                <span className="text-2xl font-black">{totalJP} <T>{"JP"}</T></span>
                 <span className="block text-[10px] text-blue-100">per minggu</span>
               </div>
             </div>
@@ -268,36 +301,36 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
             <div id="teacher-timetable-legend" className="flex flex-wrap gap-4 text-xs font-medium text-slate-500 p-3 border border-slate-100 rounded-xl bg-slate-50/50">
               <span className="flex items-center gap-1.5">
                 <span className="w-3.5 h-3.5 rounded bg-sky-100 border border-sky-200"></span>
-                Kelas Reguler (Biru Muda)
+                <T>{"Kelas Reguler (Biru Muda)"}</T>
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-3.5 h-3.5 rounded bg-pink-100 border border-pink-200"></span>
-                Kelas Bentrok (Pink)
+                <T>{"Kelas Bentrok (Pink)"}</T>
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-3.5 h-3.5 rounded bg-emerald-100 border border-emerald-200"></span>
-                Kelas Gabung (Hijau)
+                <T>{"Kelas Gabung (Hijau)"}</T>
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-3.5 h-3.5 rounded bg-teal-100 border border-teal-300"></span>
-                Kelas Bergantian (Tosca)
+                <T>{"Kelas Bergantian (Tosca)"}</T>
               </span>
               {isITBA && (
                 <span className="flex items-center gap-1.5">
                   <span className="w-3.5 h-3.5 rounded bg-purple-100 border border-purple-200"></span>
-                  Pendamping Guru Mapel (Ungu)
+                  <T>{"Pendamping Guru Mapel (Ungu)"}</T>
                 </span>
               )}
               <span className="flex items-center gap-1.5 ml-auto">
                 <HelpCircle className="w-3.5 h-3.5 text-slate-400" />
-                Dua kelas bersamaan diampu satu ustadz dihitung sebagai 1 JP
+                <T>{"Dua kelas bersamaan diampu satu ustadz dihitung sebagai 1 JP"}</T>
               </span>
             </div>
 
             {/* Export is driven by the existing grid, not an additional schedule view. */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <p className="text-xs text-slate-500">
-                PNG menampilkan jadwal asli guru (Senin–Jumat, JP1–JP6), bukan perubahan insidental minggu ini.
+                <T>{"PNG mengikuti mode dan minggu yang dipilih (Senin–Jumat, JP1–JP6)."}</T>
               </p>
               <button
                 id="download-teacher-timetable-png-btn"
@@ -339,7 +372,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                   {HARI_LIST.map(hari => (
                     <tr key={hari} className="hover:bg-slate-50/50 transition-colors">
                       <td className="p-4 font-bold text-slate-700 bg-slate-50/50 text-center border-r border-slate-200">
-                        {hari}
+                        {t(hari)}
                       </td>
                       {JAM_LIST.map(jam => {
                         const items = scheduleMap[hari][jam] || [];
@@ -392,37 +425,45 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                             cellClasses = "bg-purple-50 text-purple-900 border-l-2 border-l-purple-400 border-purple-100";
                             badge = (
                               <span className="mt-1.5 text-[8px] bg-purple-100 text-purple-800 border border-purple-200 font-bold px-1 py-0.5 rounded uppercase tracking-wider inline-block">
-                                Pendamping (1 JP)
+                                <T>{"Pendamping (1 JP)"}</T>
                               </span>
                             );
                           } else if (isSlotGabung) {
                             cellClasses = "bg-emerald-50 text-emerald-900 border-l-2 border-l-emerald-400 border-emerald-100";
                             badge = (
                               <span className="mt-1.5 text-[8px] bg-emerald-100 text-emerald-800 font-bold px-1 py-0.5 rounded uppercase tracking-wider inline-block">
-                                Gabung (1 JP)
+                                <T>{"Gabung (1 JP)"}</T>
                               </span>
                             );
                           } else if (isSlotBergantian) {
                             cellClasses = "bg-teal-50 text-teal-950 border-l-2 border-l-teal-500 border-teal-200";
                             badge = (
                               <span className="mt-1.5 text-[8px] bg-teal-100 text-teal-900 border border-teal-300 font-bold px-1 py-0.5 rounded uppercase tracking-wider inline-block">
-                                Bergantian (1 JP)
+                                <T>{"Bergantian (1 JP)"}</T>
                               </span>
                             );
                           } else if (isConflict) {
                             cellClasses = "bg-pink-50 text-pink-900 border-l-2 border-l-pink-400 border-pink-100";
                             badge = (
                               <span className="mt-1.5 text-[8px] bg-pink-100 text-pink-700 font-bold px-1 py-0.5 rounded uppercase tracking-wider inline-block">
-                                Bentrok (1 JP)
+                                <T>{"Bentrok (1 JP)"}</T>
                               </span>
                             );
                           } else {
                             cellClasses = "bg-sky-50 text-sky-900 border-l-2 border-l-sky-400 border-sky-100";
                             badge = (
                               <span className="mt-1.5 text-[8px] bg-sky-100 text-sky-800 font-bold px-1 py-0.5 rounded uppercase tracking-wider inline-block">
-                                Reguler (1 JP)
+                                <T>{"Reguler (1 JP)"}</T>
                               </span>
                             );
+                          }
+
+                          if (scheduleMode === "EFFECTIVE") {
+                            if (items.some((item) => (item as TeacherWeekRow).weekStatus === "TUGAS_RESMI")) cellClasses = "bg-rose-100 text-red-900 border-l-4 border-l-red-600 border-red-300";
+                            else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "IZIN")) cellClasses = "bg-rose-50 text-rose-900 border-l-2 border-l-rose-500 border-rose-200";
+                            else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "KALENDER")) cellClasses = "bg-red-50 text-red-800 border-l-2 border-l-red-400 border-red-200";
+                            else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "BADAL")) cellClasses = "bg-amber-50 text-amber-900 border-l-2 border-l-amber-500 border-amber-200";
+                            else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "INSIDENTAL")) cellClasses = "bg-indigo-50 text-indigo-900 border-l-2 border-l-indigo-500 border-indigo-200";
                           }
 
                           return (
@@ -453,6 +494,8 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                               title="Klik untuk detail pelajaran & pengampu"
                             >
                               <div data-teacher-export-subject="true" data-export-expand-text="true" className="font-extrabold text-xs sm:text-sm leading-tight">{displayMapel}</div>
+                              {scheduleMode === "EFFECTIVE" && [...new Set(items.map((item) => (item as TeacherWeekRow).weekStatus))].map((status) => status !== "NORMAL" && <div key={status} className="mt-1 text-[9px] font-black uppercase">{status === "KALENDER" ? "KALENDER / KBM BATAL" : status === "TUGAS_RESMI" ? "TUGAS SEKOLAH — TIDAK MENGAJAR" : status}</div>)}
+                              {scheduleMode === "EFFECTIVE" && items.some((item) => (item as TeacherWeekRow).weekDetail) && <div className="text-[9px] leading-tight mt-1">{items.map((item) => (item as TeacherWeekRow).weekDetail).filter(Boolean).join(" • ")}</div>}
                               <div data-teacher-export-class="true" data-export-expand-text="true" className="text-xs font-bold mt-1 opacity-90">Kelas {displayKelas}</div>
                               <div className="text-[10px] mt-0.5 opacity-75">
                                 {(() => {
@@ -525,7 +568,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                 return (
                   <div key={hari} className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
                     <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex justify-between items-center">
-                      <span className="font-bold text-slate-800">{hari}</span>
+                      <span className="font-bold text-slate-800">{t(hari)}</span>
                       <span className="text-xs text-blue-600 bg-blue-50 font-semibold px-2 py-0.5 rounded-full">
                         {daySlots.filter(s => s.items.length > 0).length} Sesi
                       </span>
@@ -583,35 +626,35 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                               bgClasses = "bg-purple-50 border-purple-100 text-purple-900";
                               badge = (
                                 <span className="text-[8px] bg-purple-100 text-purple-800 border border-purple-200 font-bold px-1 py-0.5 rounded uppercase tracking-wider">
-                                  Pendamping (1 JP)
+                                  <T>{"Pendamping (1 JP)"}</T>
                                 </span>
                               );
                             } else if (isSlotGabung) {
                               bgClasses = "bg-emerald-50 border-emerald-100 text-emerald-900";
                               badge = (
                                 <span className="text-[8px] bg-emerald-100 text-emerald-800 font-bold px-1 py-0.5 rounded uppercase tracking-wider">
-                                  Gabung (1 JP)
+                                  <T>{"Gabung (1 JP)"}</T>
                                 </span>
                               );
                             } else if (isSlotBergantian) {
                               bgClasses = "bg-teal-50 border-teal-200 text-teal-950";
                               badge = (
                                 <span className="text-[8px] bg-teal-100 text-teal-900 border border-teal-300 font-bold px-1 py-0.5 rounded uppercase tracking-wider">
-                                  Bergantian (1 JP)
+                                  <T>{"Bergantian (1 JP)"}</T>
                                 </span>
                               );
                             } else if (isConflict) {
                               bgClasses = "bg-pink-50 border-pink-100 text-pink-900";
                               badge = (
                                 <span className="text-[8px] bg-pink-100 text-pink-700 font-bold px-1 py-0.5 rounded uppercase tracking-wider">
-                                  Bentrok (1 JP)
+                                  <T>{"Bentrok (1 JP)"}</T>
                                 </span>
                               );
                             } else {
                               bgClasses = "bg-sky-50 border-sky-100 text-sky-900";
                               badge = (
                                 <span className="text-[8px] bg-sky-100 text-sky-800 font-bold px-1 py-0.5 rounded uppercase tracking-wider">
-                                  Reguler (1 JP)
+                                  <T>{"Reguler (1 JP)"}</T>
                                 </span>
                               );
                             }
@@ -702,7 +745,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                           })
                       ) : (
                         <div className="text-center py-4 text-xs text-slate-400 italic">
-                          Tidak ada jadwal mengajar pada hari ini
+                          <T>{"Tidak ada jadwal mengajar pada hari ini"}</T>
                         </div>
                       )}
                     </div>
@@ -715,8 +758,8 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
         ) : (
           <div className="text-center py-10">
             <AlertCircle className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-            <p className="text-slate-500 font-medium">Belum memilih guru</p>
-            <p className="text-xs text-slate-400 mt-1">Silakan cari atau pilih nama guru di dashboard terlebih dahulu.</p>
+            <p className="text-slate-500 font-medium"><T>{"Belum memilih guru"}</T></p>
+            <p className="text-xs text-slate-400 mt-1"><T>{"Silakan cari atau pilih nama guru di dashboard terlebih dahulu."}</T></p>
           </div>
         )}
       </div>
@@ -729,15 +772,15 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
             <div className="bg-slate-900 text-white p-5 flex justify-between items-start shrink-0">
               <div>
                 <span className="text-[10px] font-extrabold uppercase tracking-widest bg-blue-600 px-2.5 py-0.5 rounded-full">
-                  Detail Pelajaran
+                  <T>{"Detail Pelajaran"}</T>
                 </span>
                 <h3 className="text-xl font-black mt-2 leading-tight flex items-center gap-2">
                   <Calendar className="w-5 h-5 text-blue-400" />
-                  Hari {selectedDetail.hari}, Jam ke-{selectedDetail.jam}
+                  {t("Hari")} {t(selectedDetail.hari)}, {t("Jam ke-")}{selectedDetail.jam}
                 </h3>
                 <p className="text-xs text-slate-400 font-medium mt-1 flex items-center gap-1.5">
                   <Clock className="w-3.5 h-3.5 text-slate-400" />
-                  Waktu: {selectedDetail.waktu}
+                  <T>{"Waktu:"}</T> {selectedDetail.waktu}
                 </p>
               </div>
               <button
@@ -837,7 +880,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                           </div>
                           {group.ruangan && (
                             <span className="text-xs text-slate-500 font-medium mt-1 block">
-                              Ruangan: <span className="font-semibold text-slate-700">{getRoomDisplayName(group.ruangan, masterRuangan)}</span>
+                              <T>{"Ruangan:"}</T> <span className="font-semibold text-slate-700">{getRoomDisplayName(group.ruangan, masterRuangan)}</span>
                             </span>
                           )}
                           {group.keterangan_khusus && (
@@ -847,12 +890,12 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                           )}
                           {group.kelasgabung && (
                             <span className="mt-1.5 text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded uppercase tracking-wider inline-block mr-1">
-                              Kelas Gabung
+                              <T>{"Kelas Gabung"}</T>
                             </span>
                           )}
                           {group.isBergantian && (
                             <span className="mt-1.5 text-[10px] bg-teal-100 text-teal-900 border border-teal-200 font-bold px-2 py-0.5 rounded uppercase tracking-wider inline-block">
-                              Kelas Bergantian
+                              <T>{"Kelas Bergantian"}</T>
                             </span>
                           )}
                         </div>
@@ -861,7 +904,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                         <div className="space-y-2">
                           <span className="text-xs font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-1">
                             <Users className="w-3.5 h-3.5" />
-                            Guru Pengampu (Team Teaching)
+                            <T>{"Guru Pengampu (Team Teaching)"}</T>
                           </span>
 
                           <div className="space-y-2">
@@ -886,7 +929,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                               );
                             })}
                             {group.teachers.length === 0 && (
-                              <p className="text-xs text-slate-400 italic">Tidak ada guru terdaftar</p>
+                              <p className="text-xs text-slate-400 italic"><T>{"Tidak ada guru terdaftar"}</T></p>
                             )}
                           </div>
                         </div>
@@ -903,7 +946,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                 onClick={() => setSelectedDetail(null)}
                 className="bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition-all"
               >
-                Tutup Detail
+                <T>{"Tutup Detail"}</T>
               </button>
             </div>
           </div>

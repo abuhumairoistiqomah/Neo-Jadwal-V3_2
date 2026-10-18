@@ -8,6 +8,7 @@ import { uploadPublicLeaveTaskFile } from "../infrastructure/drive/publicLeaveTa
 import { PublicLateTaskRepository } from "../infrastructure/repositories/publicLateTaskRepository";
 import { buildLateTaskHandoffWhatsappMessage, findTeacherByName, whatsappDigits } from "../domain/whatsappTemplates";
 
+import { T } from '../i18n/LanguageProvider';
 interface LateTaskCompletionProps {
   teachers: Teacher[];
   logs: LogIzinItem[];
@@ -228,7 +229,7 @@ export const LateTaskCompletion: React.FC<LateTaskCompletionProps> = ({
       {message && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">{message}</div>}
 
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <label className="text-xs font-black uppercase tracking-wide text-slate-500">Nama Guru</label>
+        <label className="text-xs font-black uppercase tracking-wide text-slate-500"><T>{"Nama Guru"}</T></label>
         <div className="relative mt-2">
           <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <select value={selectedTeacher} onChange={(e) => { setSelectedTeacher(e.target.value); setActiveKey(""); setAccess(null); }} className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 py-3 text-sm font-semibold">
@@ -276,7 +277,7 @@ export const LateTaskCompletion: React.FC<LateTaskCompletionProps> = ({
             ) : (
               <div className="space-y-5">
                 <div>
-                  <div className="font-black text-lg text-slate-900">JP {active.jam_ke} • {active.mapel}</div>
+                  <div className="font-black text-lg text-slate-900"><T>{"JP"}</T> {active.jam_ke} • {active.mapel}</div>
                   <div className="text-sm text-slate-500">{active.kelas} • {formatDate(active.tanggal)}</div>
                 </div>
 
@@ -297,7 +298,7 @@ export const LateTaskCompletion: React.FC<LateTaskCompletionProps> = ({
                     </div>
                     <div>
                       <label className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 px-3 py-2.5 text-xs font-black cursor-pointer">
-                        <UploadCloud className="w-4 h-4" /> Pilih File Tugas
+                        <UploadCloud className="w-4 h-4" /> <T>{"Pilih File Tugas"}</T>
                         <input type="file" multiple className="hidden" onChange={(e) => { const picked = Array.from(e.target.files || []); setFiles((current) => [...current, ...picked]); e.currentTarget.value = ""; }} />
                       </label>
                       <div className="mt-2 flex flex-wrap gap-2">

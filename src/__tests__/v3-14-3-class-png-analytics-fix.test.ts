@@ -10,7 +10,7 @@ const verifier = fs.readFileSync(new URL("../../supabase/migrations/202610110051
 test("V3.14.3 makes PNG the class timetable image export", () => {
   assert.match(jadwalKelas, /downloadElementAsPng/);
   assert.match(jadwalKelas, /Jadwal_Kelas_\$\{selectedClass\.replace/);
-  assert.match(jadwalKelas, /scheduleViewMode === "MASTER" \? "Asli" : "Minggu_Ini"/);
+  assert.match(jadwalKelas, /scheduleViewMode === "MASTER" \? "Normal" : `Insidental_\$\{effectiveWeekReference\}`/);
   assert.match(jadwalKelas, /\.png/);
   assert.match(jadwalKelas, /Unduh Jadwal Kelas \(PNG\)/);
   assert.match(exportUtil, /image\/png/);

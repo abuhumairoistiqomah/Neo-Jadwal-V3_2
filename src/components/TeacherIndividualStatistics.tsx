@@ -6,6 +6,8 @@ import { buildIndividualTeacherStatistics, type IndividualLeaveProfile, type Pat
 import { TeacherIndividualStatisticsRepository } from '../infrastructure/repositories/teacherIndividualStatisticsRepository';
 import { SearchableSelect } from './ui/SearchableSelect';
 
+import { T } from '../i18n/LanguageProvider';
+
 interface Props {
   teachers: Teacher[];
   schedules: ScheduleItem[];
@@ -194,18 +196,18 @@ export const TeacherIndividualStatistics:React.FC<Props> = ({teachers,schedules,
         </div>
         <p className="text-sm text-slate-500">{SCOPES.find(item=>item.id===mode)?.details} Warna = konsentrasi JP izin terhadap kesempatan mengajar pada slot yang sama.</p>
         <div className="grid grid-cols-3 gap-2 text-xs">
-          <div className="rounded-xl border border-slate-200 p-3"><strong>Sehari penuh</strong><p>{stats.teachingByScope.FULL_DAY} JP / {stats.absentDatesByScope.FULL_DAY} tanggal</p></div>
-          <div className="rounded-xl border border-slate-200 p-3"><strong>Sebagian JP</strong><p>{stats.teachingByScope.PARTIAL} JP / {stats.absentDatesByScope.PARTIAL} tanggal</p></div>
+          <div className="rounded-xl border border-slate-200 p-3"><strong><T>{"Sehari penuh"}</T></strong><p>{stats.teachingByScope.FULL_DAY} JP / {stats.absentDatesByScope.FULL_DAY} tanggal</p></div>
+          <div className="rounded-xl border border-slate-200 p-3"><strong><T>{"Sebagian JP"}</T></strong><p>{stats.teachingByScope.PARTIAL} JP / {stats.absentDatesByScope.PARTIAL} tanggal</p></div>
           <div className="rounded-xl border border-slate-200 p-3"><strong>Belum terklasifikasi</strong><p>{stats.teachingByScope.UNKNOWN} JP / {stats.absentDatesByScope.UNKNOWN} tanggal</p></div>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">JP izin cocok — mode ini</p><p className="text-xl font-black">{selectedAbsent} JP</p></div>
-          <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Kesempatan mengajar</p><p className="text-xl font-black">{selectedScheduled} JP</p></div>
+          <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">JP izin cocok — mode ini</p><p className="text-xl font-black">{selectedAbsent} <T>{"JP"}</T></p></div>
+          <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Kesempatan mengajar</p><p className="text-xl font-black">{selectedScheduled} <T>{"JP"}</T></p></div>
           <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Rasio sesuai mode</p><p className="text-xl font-black">{pct(selectedAbsent,selectedScheduled)}</p></div>
-          <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Jenis historis tidak diketahui</p><p className="text-xl font-black">{stats.teachingByScope.UNKNOWN} JP</p></div>
+          <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Jenis historis tidak diketahui</p><p className="text-xl font-black">{stats.teachingByScope.UNKNOWN} <T>{"JP"}</T></p></div>
         </div>
         <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-center text-xs border-separate border-spacing-1">
-          <thead><tr><th className="p-2 text-left">Hari</th>{[1,2,3,4,5,6].map(p=><th key={p} className="p-2">JP{p}</th>)}<th className="p-2">Total</th></tr></thead>
+          <thead><tr><th className="p-2 text-left">Hari</th>{[1,2,3,4,5,6].map(p=><th key={p} className="p-2"><T>{"JP"}</T>{p}</th>)}<th className="p-2">Total</th></tr></thead>
           <tbody>{selected.map((d,i)=><tr key={d.weekday}>
             <th className="p-2 text-left font-bold text-slate-800">{DAYS[i]}</th>
             {d.byPeriod.map(cell=><td key={cell.period} title={`${cell.absent} izin dari ${cell.scheduled} kesempatan mengajar`} className="rounded-lg p-2" style={{backgroundColor:toneFor(cell.absent,cell.scheduled)}}><span className="font-bold">{cell.absent}/{cell.scheduled}</span><span className="block text-[10px] text-slate-600">{pct(cell.absent,cell.scheduled)}</span></td>)}
@@ -231,7 +233,7 @@ export const TeacherIndividualStatistics:React.FC<Props> = ({teachers,schedules,
           <label className="flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={onlyAbsent} onChange={e=>{setOnlyAbsent(e.target.checked);setShowAllDates(false);}}/> Tanggal ada izin saja</label>
         </div>
         <div className="overflow-x-auto"><table className="w-full min-w-[670px] text-center text-xs border-separate border-spacing-1">
-          <thead><tr><th className="p-2 text-left">Tanggal</th>{[1,2,3,4,5,6].map(p=><th key={p} className="p-2">JP{p}</th>)}<th className="p-2">JP0</th><th className="p-2">JP Free</th></tr></thead>
+          <thead><tr><th className="p-2 text-left"><T>{"Tanggal"}</T></th>{[1,2,3,4,5,6].map(p=><th key={p} className="p-2"><T>{"JP"}</T>{p}</th>)}<th className="p-2">JP0</th><th className="p-2">JP Free</th></tr></thead>
           <tbody>{displayDates.map(row=><tr key={row.date}><th className="whitespace-nowrap p-2 text-left font-bold text-slate-700">{dayName(row.date)}, {formatDay(row.date)}</th>
             {[1,2,3,4,5,6].map(p=>{
               const absent = row.absentPeriods.find(slot=>slot.period===p && modeMatch(mode,slot.scope));
@@ -266,13 +268,13 @@ export const TeacherIndividualStatistics:React.FC<Props> = ({teachers,schedules,
         {visibleReasonSummary.length > 0 && <div className="space-y-2">
           <h3 className="text-sm font-black text-slate-800">Alasan paling sering tercatat</h3>
           <div className="overflow-x-auto"><table className="w-full min-w-[530px] text-sm">
-            <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3">Alasan sebagaimana tercatat</th><th className="px-2">Tanggal</th><th className="px-2">JP mengajar</th><th className="px-2">JP0 + Free</th><th className="px-2">Total JP</th></tr></thead>
+            <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3">Alasan sebagaimana tercatat</th><th className="px-2"><T>{"Tanggal"}</T></th><th className="px-2">JP mengajar</th><th className="px-2">JP0 + Free</th><th className="px-2">Total JP</th></tr></thead>
             <tbody>{visibleReasonSummary.map(row=><tr key={row.reason.toLocaleLowerCase('id-ID')} className="border-b border-slate-100"><td className="py-2 pr-3 font-medium break-words">{row.reason}</td><td className="px-2">{row.dates}</td><td className="px-2">{row.teachingJp}</td><td className="px-2">{row.homeroomJp+row.freeJp}</td><td className="px-2 font-bold">{row.totalJp}</td></tr>)}</tbody>
           </table></div>
         </div>}
         <h3 className="text-sm font-black text-slate-800">Rincian alasan menurut tanggal</h3>
         {visibleReasonRecords.length ? <div className="overflow-x-auto"><table className="w-full min-w-[700px] text-sm">
-          <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3">Tanggal</th><th className="pr-3">Alasan asli</th><th className="px-2">Jenis izin</th><th className="px-2">JP mengajar</th><th className="px-2">JP0</th><th className="px-2">Free</th><th className="px-2">Total</th><th className="pl-2">Sumber</th></tr></thead>
+          <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3"><T>{"Tanggal"}</T></th><th className="pr-3">Alasan asli</th><th className="px-2">Jenis izin</th><th className="px-2">JP mengajar</th><th className="px-2">JP0</th><th className="px-2">Free</th><th className="px-2">Total</th><th className="pl-2">Sumber</th></tr></thead>
           <tbody>{shownReasons.map(row=><tr key={`${row.date}|${row.reason}|${row.source}|${row.requestType}`} className="border-b border-slate-100"><td className="whitespace-nowrap py-3 pr-3">{dayName(row.date)}, {formatDay(row.date)}</td><td className="min-w-[150px] pr-3 break-words">{row.reason}</td><td className="whitespace-nowrap px-2 text-xs">{scopeText(row.requestType)}</td><td className="px-2">{row.teachingJp}</td><td className="px-2">{row.homeroomJp}</td><td className="px-2">{row.freeJp}</td><td className="px-2 font-bold">{row.totalJp}</td><td className="whitespace-nowrap pl-2 text-xs text-slate-500">{sourceText(row.source)}</td></tr>)}</tbody>
         </table></div> : <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">Tidak ada alasan izin yang tercatat sesuai filter dan periode ini.</p>}
         {!showAllReasons && visibleReasonRecords.length > 20 && <button type="button" onClick={()=>setShowAllReasons(true)} className="no-print text-sm font-bold text-blue-700">Tampilkan seluruh {visibleReasonRecords.length} catatan tanggal/alasan</button>}

@@ -7,6 +7,9 @@ import {
   HelpCircle, CheckCircle, Sparkles 
 } from "lucide-react";
 
+import { T } from '../i18n/LanguageProvider';
+
+
 interface ListGuruKelasProps {
   teachers: Teacher[];
   schedules: ScheduleItem[];
@@ -363,10 +366,10 @@ export const ListGuruKelas: React.FC<ListGuruKelasProps> = ({
           className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-indigo-600 bg-white px-4 py-2 rounded-xl border border-gray-100 hover:border-indigo-100 shadow-xs transition-all self-start cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Kembali ke Dashboard</span>
+          <span><T>{"Kembali ke Dashboard"}</T></span>
         </button>
 
-        <span className="text-sm font-medium text-gray-400">Guru Pengampu per Kelas</span>
+        <span className="text-sm font-medium text-gray-400"><T>{"Guru Pengampu per Kelas"}</T></span>
       </div>
 
       {/* Main Container Card */}
@@ -379,7 +382,7 @@ export const ListGuruKelas: React.FC<ListGuruKelasProps> = ({
               <span className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
                 <GraduationCap className="w-6 h-6" />
               </span>
-              <span>Guru Pengampu per Kelas</span>
+              <span><T>{"Guru Pengampu per Kelas"}</T></span>
             </h2>
             <p className="text-xs text-gray-500">
               Pilih kelas untuk melihat alokasi JP per mata pelajaran, daftar guru pengampu, dan jadwal mengajar.
@@ -389,7 +392,7 @@ export const ListGuruKelas: React.FC<ListGuruKelasProps> = ({
           {/* Class Selector Filter Dropdown & Search */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
             <div className="relative flex-1 sm:w-64">
-              <label htmlFor="select-class-filter" className="sr-only">Pilih Kelas</label>
+              <label htmlFor="select-class-filter" className="sr-only"><T>{"Pilih Kelas"}</T></label>
               <div className="relative">
                 <select
                   id="select-class-filter"
@@ -474,7 +477,7 @@ export const ListGuruKelas: React.FC<ListGuruKelasProps> = ({
               <div className="grid grid-cols-3 gap-3 shrink-0">
                 <div className="bg-white/10 backdrop-blur-xs border border-white/10 p-3 rounded-xl text-center min-w-[85px]">
                   <span className="text-[10px] text-indigo-200 font-bold uppercase tracking-wider block">Total JP</span>
-                  <span className="text-xl font-black text-amber-300">{totalClassJp} JP</span>
+                  <span className="text-xl font-black text-amber-300">{totalClassJp} <T>{"JP"}</T></span>
                 </div>
 
                 <div className="bg-white/10 backdrop-blur-xs border border-white/10 p-3 rounded-xl text-center min-w-[85px]">
@@ -483,7 +486,7 @@ export const ListGuruKelas: React.FC<ListGuruKelasProps> = ({
                 </div>
 
                 <div className="bg-white/10 backdrop-blur-xs border border-white/10 p-3 rounded-xl text-center min-w-[85px]">
-                  <span className="text-[10px] text-indigo-200 font-bold uppercase tracking-wider block">Mapel</span>
+                  <span className="text-[10px] text-indigo-200 font-bold uppercase tracking-wider block"><T>{"Mapel"}</T></span>
                   <span className="text-xl font-black text-indigo-200">{totalDistinctMapels}</span>
                 </div>
               </div>
@@ -497,7 +500,7 @@ export const ListGuruKelas: React.FC<ListGuruKelasProps> = ({
               </div>
               <div className="flex items-center gap-1.5 pt-2 sm:pt-0 sm:pl-3">
                 <span className="w-2.5 h-2.5 rounded bg-emerald-500 shrink-0" />
-                <span><strong className="text-emerald-900 font-bold">Wali Kelas</strong></span>
+                <span><strong className="text-emerald-900 font-bold"><T>{"Wali Kelas"}</T></strong></span>
               </div>
               <div className="flex items-center gap-1.5 pt-1 sm:pt-0 sm:pl-3">
                 <span className="w-2.5 h-2.5 rounded bg-teal-500 shrink-0" />
@@ -524,7 +527,7 @@ export const ListGuruKelas: React.FC<ListGuruKelasProps> = ({
                       className="p-4 cursor-pointer hover:bg-slate-200/80 transition-colors"
                       onClick={() => handleSort("mapel")}
                     >
-                      Mata Pelajaran <SortIcon colKey="mapel" />
+                      <T>{"Mata Pelajaran"}</T> <SortIcon colKey="mapel" />
                     </th>
                     <th 
                       id="th-gk-guru"
@@ -623,7 +626,7 @@ export const ListGuruKelas: React.FC<ListGuruKelasProps> = ({
                           {/* Total JP per Mata Pelajaran */}
                           <td className="p-4 text-center">
                             <span className="inline-block bg-indigo-600 text-white font-black text-xs px-3.5 py-1 rounded-xl shadow-2xs">
-                              {item.totalJp} JP
+                              {item.totalJp} <T>{"JP"}</T>
                             </span>
                           </td>
 
@@ -700,7 +703,7 @@ export const ListGuruKelas: React.FC<ListGuruKelasProps> = ({
                         </div>
 
                         <span className="bg-indigo-600 text-white font-black text-xs px-2.5 py-1 rounded-lg shrink-0 shadow-2xs">
-                          {item.totalJp} JP
+                          {item.totalJp} <T>{"JP"}</T>
                         </span>
                       </div>
 

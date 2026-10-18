@@ -5,6 +5,7 @@ import {
   Layers, ChevronUp, ChevronDown, Award, CheckCircle, Clock 
 } from "lucide-react";
 
+import { T } from '../i18n/LanguageProvider';
 interface RekapGuruProps {
   teachers: Teacher[];
   schedules: ScheduleItem[];
@@ -236,7 +237,7 @@ export const RekapGuru: React.FC<RekapGuruProps> = ({
           className="flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-blue-600 bg-white px-4 py-2 rounded-xl border border-slate-100 hover:border-blue-100 shadow-sm transition-all self-start"
         >
           <ArrowLeft className="w-4 h-4" />
-          Kembali ke Dashboard
+          <T>{"Kembali ke Dashboard"}</T>
         </button>
         <span className="text-xs sm:text-sm font-semibold text-slate-400 bg-slate-100 px-3 py-1 rounded-full uppercase tracking-wider self-start sm:self-auto">
           Halaman Admin (Rekap Mengajar)
@@ -272,7 +273,7 @@ export const RekapGuru: React.FC<RekapGuruProps> = ({
           </div>
           <div>
             <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Total JP Jadwal</p>
-            <h4 className="text-base sm:text-lg font-bold text-slate-800">{stats.totalJPAllocated} JP</h4>
+            <h4 className="text-base sm:text-lg font-bold text-slate-800">{stats.totalJPAllocated} <T>{"JP"}</T></h4>
           </div>
         </div>
 
@@ -473,7 +474,7 @@ export const RekapGuru: React.FC<RekapGuruProps> = ({
                                 : "bg-blue-50 text-blue-700 border-blue-200"
                               : "bg-slate-100 text-slate-400 border-slate-200 italic"
                           }`}>
-                            {totalJP} <span className="text-[10px] font-bold uppercase ml-0.5">JP</span>
+                            {totalJP} <span className="text-[10px] font-bold uppercase ml-0.5"><T>{"JP"}</T></span>
                           </span>
                           {totalJP >= 24 && (
                             <span className="text-[8px] text-emerald-600 font-bold mt-1 uppercase tracking-wider">Full load</span>

@@ -65,12 +65,12 @@ test("combobox keeps an actual dropdown arrow and supports typing without magnif
   assert.doesNotMatch(ui, /<Search /);
 });
 
-test("Proses Badal opens new tab and keeps approval screen", () => {
+test("Proses Badal opens the smart in-page picker and preserves approval navigation", () => {
   const ui = readFileSync("src/components/LeaveApprovalAdmin.tsx", "utf8");
-  assert.match(ui, /href=\{buildBadalProcessingUrl\(session\)\}/);
-  assert.match(ui, /target="_blank"/);
-  assert.match(ui, /rel="noopener noreferrer"/);
-  assert.doesNotMatch(ui, /window.location.href = buildBadalProcessingUrl/);
+  assert.match(ui, /setActiveWaitingSession\(session\)/);
+  assert.match(ui, /<InputGuruPengganti/);
+  assert.match(ui, /approvedWaitingSession=\{activeWaitingSession\}/);
+  assert.doesNotMatch(ui, /href=\{buildBadalProcessingUrl\(session\)\}/);
 });
 
 test("JP0 SQL supports multi-class notes and all affected schedule surfaces share calendar precedence", () => {

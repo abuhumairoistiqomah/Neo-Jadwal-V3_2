@@ -123,6 +123,7 @@ export type ActivePage =
   | "ajukan-izin"
   | "lengkapi-tugas"
   | "approval-izin"
+  | "approved-leave-list"
   | "action-center"
   | "management-analytics"
   | "teacher-statistics"
@@ -144,6 +145,8 @@ export type ActivePage =
   | "schedule-incidental"
   | "substitute-constraints"
   | "academic-calendar"
+  | "education-calendar"
+  | "education-calendar-admin"
   | "schedule-control-center";
 
 

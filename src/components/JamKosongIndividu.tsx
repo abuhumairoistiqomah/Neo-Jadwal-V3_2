@@ -3,6 +3,7 @@ import { Teacher, ScheduleItem, normalizeDay, checkIsITBA, isSameDay, isITBACore
 import { ArrowLeft, Clock, Calendar, CheckCircle, Search, HelpCircle } from "lucide-react";
 import { JAM_TIME_MAP, SCHOOL_DAYS as HARI_LIST, TEACHING_JPS as JAM_LIST } from "../constants/schedule";
 
+import { T } from '../i18n/LanguageProvider';
 interface JamKosongIndividuProps {
   teachers: Teacher[];
   schedules: ScheduleItem[];
@@ -127,7 +128,7 @@ export const JamKosongIndividu: React.FC<JamKosongIndividuProps> = ({
           className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-indigo-600 bg-white px-4 py-2 rounded-xl border border-gray-100 hover:border-indigo-100 shadow-sm transition-all self-start"
         >
           <ArrowLeft className="w-4 h-4" />
-          Kembali ke Dashboard
+          <T>{"Kembali ke Dashboard"}</T>
         </button>
 
         <span className="text-sm font-medium text-gray-400">Analisis Jam Kosong Individu</span>
@@ -297,7 +298,7 @@ export const JamKosongIndividu: React.FC<JamKosongIndividuProps> = ({
           </div>
         ) : (
           <div className="text-center py-10 text-gray-400">
-            Silakan pilih nama guru di Dashboard terlebih dahulu.
+            <T>{"Silakan pilih nama guru di Dashboard terlebih dahulu."}</T>
           </div>
         )}
       </div>

@@ -11,6 +11,7 @@ import { dateMatchesScheduleDay, nextOccurrenceISO, type ScheduleMutationMode } 
 import { parseScheduleClassMode, type ScheduleClassMode } from "../domain/schedule/classMode";
 import { timeForInput, validateDatedTimeOverride } from "../domain/schedule/datedTimeOverride";
 
+import { T } from '../i18n/LanguageProvider';
 const DAY_OPTIONS = [
   { name: "Senin", value: 1 },
   { name: "Selasa", value: 2 },
@@ -344,7 +345,7 @@ Tetap simpan perubahan ini?`)) return;
               {hardConflicts.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-xs font-semibold text-rose-800">{hardConflicts.map((conflict) => <li key={conflict}>{conflict}</li>)}</ul>}
             </div>
 
-            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4"><button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600">Batal</button><button onClick={() => void save()} disabled={busy || (mutationMode === "PERMANENT" && hardConflicts.length > 0)} className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-black text-white disabled:bg-slate-300">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {mutationMode === "INCIDENTAL" ? "Simpan Hanya Tanggal Ini" : "Simpan Jadwal Tetap"}</button></div>
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4"><button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600"><T>{"Batal"}</T></button><button onClick={() => void save()} disabled={busy || (mutationMode === "PERMANENT" && hardConflicts.length > 0)} className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-black text-white disabled:bg-slate-300">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {mutationMode === "INCIDENTAL" ? "Simpan Hanya Tanggal Ini" : "Simpan Jadwal Tetap"}</button></div>
           </div>
         )}
       </div>

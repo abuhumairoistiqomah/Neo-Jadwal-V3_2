@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { TeacherHeaderSearch } from "./components/ui/TeacherHeaderSearch";
 import { 
   Teacher, ScheduleItem, LogIzinItem, ActivePage, JadwalInsidentalItem, MasterRuanganItem, KalenderAkademikItem 
 } from "./types";
@@ -17,6 +18,7 @@ import { RekapGuru } from "./components/RekapGuru";
 import { TabelJamKosong } from "./components/TabelJamKosong";
 import { LeaveRequestForm } from "./components/LeaveRequestForm";
 import { LeaveApprovalAdmin } from "./components/LeaveApprovalAdmin";
+import { ApprovedLeaveMaintenanceAdmin } from "./components/ApprovedLeaveMaintenanceAdmin";
 import { LateTaskCompletion } from "./components/LateTaskCompletion";
 import { AdminMasterData } from "./components/AdminMasterData";
 import { ScheduleMassImporter } from "./components/ScheduleMassImporter";
@@ -24,6 +26,8 @@ import { SyaikhScheduleMassImporter } from "./components/SyaikhScheduleMassImpor
 import { ScheduleQuickEditor } from "./components/ScheduleQuickEditor";
 import { SubstituteConstraintAdmin } from "./components/SubstituteConstraintAdmin";
 import { AcademicCalendarAdmin } from "./components/AcademicCalendarAdmin";
+import { EducationCalendar } from "./components/EducationCalendar";
+import { EducationCalendarAdmin } from "./components/EducationCalendarAdmin";
 import { IncidentalScheduleAdmin } from "./components/IncidentalScheduleAdmin";
 import { ScheduleControlCenter } from "./components/ScheduleControlCenter";
 import { OperationalActionCenter } from "./components/OperationalActionCenter";
@@ -33,7 +37,7 @@ import {
   ShieldAlert, ShieldCheck, Database, LogIn, LogOut, 
   HelpCircle, Wifi, WifiOff, RefreshCw, Layers,
   Menu, X, Home, Calendar, BookOpen, Clock, Users, UserPlus, 
-  History, BarChart2, BarChart3, Search, Upload, ClipboardList, Table, GraduationCap, Building2,
+  History, BarChart2, BarChart3, Upload, ClipboardList, Table, GraduationCap, Building2,
   ChevronLeft, ChevronRight, PanelLeft, PanelLeftClose, PanelLeftOpen, ClipboardCheck, FileUp, Ban, CalendarDays, CalendarPlus2, GitBranch, BellRing
 } from "lucide-react";
 import { AdminAccount } from "./types";
@@ -47,6 +51,8 @@ import { buildInvalWriteBundle, type InvalWriteMetadata } from "./domain/inval/i
 import { getSchoolTodayISO, isTaskRecoveryDateActive } from "./domain/date";
 import type { SubstituteConstraint } from "./domain/substituteAvailability";
 
+import { T, useLanguage } from './i18n/LanguageProvider';
+import { LanguageSelector } from './i18n/LanguageSelector';
 const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbweCcMn4d389P4vyTFf6qM17pxNWfjzqYnTcMEkAtjak8NFXzM0tqt7Nb5xDdx5hbn2jw/exec";
 
 const OLD_DEFAULT_API_URLS = [
@@ -64,6 +70,7 @@ const OLD_DEFAULT_API_URLS = [
 ];
 
 export default function App() {
+  const { language, t } = useLanguage();
   // --- STATE ---
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
@@ -87,6 +94,7 @@ export default function App() {
   const [activePage, setActivePage] = useState<ActivePage>("dashboard");
   const [scheduleEditorState, setScheduleEditorState] = useState<{ items: ScheduleItem[]; initialDate?: string } | null>(null);
   const [schoolToday, setSchoolToday] = useState<string>(() => getSchoolTodayISO());
+  const [calendarAuthEpoch, setCalendarAuthEpoch] = useState(0);
   const [substituteConstraints, setSubstituteConstraints] = useState<SubstituteConstraint[]>([]);
 
   // Keep actionable task-recovery queues aligned with the Jakarta school date,
@@ -111,11 +119,8 @@ export default function App() {
   const [adminAuthLoading, setAdminAuthLoading] = useState(false);
 
   // Sidebar & Global Header Search States
-  const [headerSearch, setHeaderSearch] = useState("");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
-  const [showHeaderSuggestions, setShowHeaderSuggestions] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const headerSuggestionsRef = useRef<HTMLDivElement>(null);
   const snapshotRequestRef = useRef(0);
   const [snapshotLoading, setSnapshotLoading] = useState(true);
   const [snapshotError, setSnapshotError] = useState("");
@@ -227,6 +232,7 @@ export default function App() {
     clearRuntimeSnapshot();
     setIsAdmin(false);
     setAdminUser(null);
+    setCalendarAuthEpoch(v => v + 1); // purge privileged calendar component state after sign-out
     setSubstituteConstraints([]); // Do not retain staff-only restriction data after logout.
     localStorage.removeItem("db_admin_user");
   };
@@ -281,24 +287,6 @@ export default function App() {
     setSelectedTeacherState(name);
     localStorage.setItem("selectedTeacher", name);
   };
-
-  // Sync headerSearch when selectedTeacher changes
-  useEffect(() => {
-    setHeaderSearch(selectedTeacher);
-  }, [selectedTeacher]);
-
-  // Click outside listener for header autocomplete
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (headerSuggestionsRef.current && !headerSuggestionsRef.current.contains(event.target as Node)) {
-        setShowHeaderSuggestions(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
 
   // Admin operational writes are Supabase-only in V3.12.4.
   const handleAddLogs = async (
@@ -364,13 +352,6 @@ export default function App() {
     await refreshFromSupabase();
   };
 
-  const filteredHeaderTeachers = headerSearch.trim() === ""
-    ? []
-    : teachers.filter(t => 
-        t.nama.toLowerCase().includes(headerSearch.toLowerCase()) ||
-        t.mapel_utama.toLowerCase().includes(headerSearch.toLowerCase())
-      );
-
   const currentTeacherObj = teachers.find(t => t.nama === selectedTeacher);
 
   const missingTeacherTaskCount = new Set(logs.filter((log) =>
@@ -381,49 +362,48 @@ export default function App() {
     && isTaskRecoveryDateActive(log.tanggal, schoolToday)
   ).map((log) => [log.tanggal, Number(log.jam_ke), String(log.mapel || "").trim().toLocaleLowerCase("id-ID"), String(log.guru_pengganti || "").trim().toLocaleLowerCase("id-ID")].join("|"))).size;
 
+  // Category metadata is shared by desktop, collapsed, and mobile navigation.
+  // Keep page IDs intact: renaming/reordering must never change existing routes.
   const navItems = [
-    // Menu yang dapat digunakan guru diprioritaskan di atas.
     { id: "dashboard", label: "Dashboard", icon: Home, adminOnly: false },
-    { id: "ajukan-izin", label: "Ajukan Izin", icon: ClipboardCheck, adminOnly: false },
-    { id: "lengkapi-tugas", label: missingTeacherTaskCount > 0 ? `Lengkapi Tugas (${missingTeacherTaskCount})` : "Lengkapi Tugas", icon: FileUp, adminOnly: false },
-    { id: "jadwal-lengkap", label: "Jadwal Lengkap", icon: Calendar, adminOnly: false },
+
+    // Guru / umum: first-use navigation is grouped around daily workflows.
+    { id: "jadwal-lengkap", label: "Jadwal Pribadi", icon: Calendar, adminOnly: false, section: "Jadwal" },
     { id: "jadwal-kelas", label: "Jadwal Kelas", icon: Layers, adminOnly: false },
     { id: "jadwal-ruangan", label: "Jadwal Ruangan", icon: Building2, adminOnly: false },
-    { id: "guru-pengampu-kelas", label: "Guru per Kelas", icon: GraduationCap, adminOnly: false },
+    { id: "education-calendar", label: "Kalender Pendidikan", icon: CalendarDays, adminOnly: false },
+
+    { id: "ajukan-izin", label: "Ajukan Izin", icon: ClipboardCheck, adminOnly: false, section: "Perizinan" },
+    { id: "lengkapi-tugas", label: missingTeacherTaskCount > 0 ? `${t("Lengkapi Tugas")} (${missingTeacherTaskCount})` : t("Lengkapi Tugas"), icon: FileUp, adminOnly: false },
+
+    { id: "guru-pengampu-kelas", label: "Guru per Kelas", icon: GraduationCap, adminOnly: false, section: "Statistik" },
     { id: "list-mapel", label: "List Mapel Diajar", icon: BookOpen, adminOnly: false },
     { id: "jam-kosong-individu", label: "Jam Kosong Indiv", icon: Clock, adminOnly: false },
 
-    // Workflow dan konfigurasi operasional/admin dikumpulkan di bawah.
-    { id: "approval-izin", label: "Persetujuan Izin", icon: ShieldCheck, adminOnly: true },
+    // Admin menu: by task rather than by the historical insertion order.
+    { id: "approval-izin", label: "Persetujuan Izin", icon: ShieldCheck, adminOnly: true, section: "Administrasi" },
+    { id: "approved-leave-list", label: "List Badal Pengajuan Badal", icon: ClipboardCheck, adminOnly: true },
     { id: "action-center", label: "Action Center", icon: BellRing, adminOnly: true },
-    { id: "management-analytics", label: "Management Analytics", icon: BarChart3, adminOnly: true },
+    { id: "input-pengganti", label: "Input Inval (Admin)", icon: UserPlus, adminOnly: true },
+    { id: "log-pengganti", label: "Log Izin & WA", icon: History, adminOnly: true },
+
+    { id: "schedule-incidental", label: "Jadwal Insidental", icon: CalendarPlus2, adminOnly: true, section: "Kelola Jadwal & Kalender" },
+    { id: "substitute-constraints", label: "Aturan Guru Badal", icon: Ban, adminOnly: true },
+    { id: "academic-calendar", label: "Kalender Akademik", icon: CalendarDays, adminOnly: true },
+    { id: "education-calendar-admin", label: "Input Kalender Pendidikan", icon: CalendarPlus2, adminOnly: true },
+    { id: "schedule-control-center", label: "Versi & Konflik Jadwal", icon: GitBranch, adminOnly: true },
+
+    { id: "management-analytics", label: "Management Analytics", icon: BarChart3, adminOnly: true, section: "Analitik & Rekap" },
     { id: "teacher-statistics", label: "Statistik Individu Guru", icon: BarChart2, adminOnly: true },
     { id: "tabel-jam-kosong", label: "Tabel Jam Kosong", icon: Table, adminOnly: true },
     { id: "jam-kosong-semua", label: "Jam Kosong Semua", icon: Users, adminOnly: true },
     { id: "rekap-guru", label: "Rekap Guru (Admin)", icon: ClipboardList, adminOnly: true },
-    { id: "master-data", label: "Master Data", icon: Database, adminOnly: true },
+    { id: "statistik", label: "Statistik Badal (Legacy)", icon: BarChart2, adminOnly: true },
+
+    { id: "master-data", label: "Master Data", icon: Database, adminOnly: true, section: "Data & Impor" },
     { id: "schedule-import", label: "Import Jadwal Massal", icon: FileUp, adminOnly: true },
     { id: "schedule-syaikh-import", label: "Import Jadwal Syaikh", icon: Upload, adminOnly: true },
-    { id: "schedule-incidental", label: "Jadwal Insidental", icon: CalendarPlus2, adminOnly: true },
-    { id: "substitute-constraints", label: "Aturan Guru Badal", icon: Ban, adminOnly: true },
-    { id: "academic-calendar", label: "Kalender Akademik", icon: CalendarDays, adminOnly: true },
-    { id: "schedule-control-center", label: "Versi & Konflik Jadwal", icon: GitBranch, adminOnly: true },
-    { id: "input-pengganti", label: "Input Inval (Admin)", icon: UserPlus, adminOnly: true },
-    { id: "log-pengganti", label: "Log Izin & WA", icon: History, adminOnly: true },
-    { id: "statistik", label: "Statistik Badal (Legacy)", icon: BarChart2, adminOnly: true },
   ];
-
-  const handleSelectHeaderTeacher = (teacherName: string) => {
-    setSelectedTeacher(teacherName);
-    setHeaderSearch(teacherName);
-    setShowHeaderSuggestions(false);
-  };
-
-  const handleClearHeaderTeacher = () => {
-    setSelectedTeacher("");
-    setHeaderSearch("");
-    setShowHeaderSuggestions(false);
-  };
 
   return (
     <div className="flex h-screen w-full bg-slate-50 font-sans text-slate-900 overflow-hidden">
@@ -462,7 +442,7 @@ export default function App() {
                   id="toggle-sidebar-collapse-btn"
                   onClick={() => setIsSidebarCollapsed(true)}
                   className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors hidden lg:flex items-center justify-center shrink-0"
-                  title="Sembunyikan Sidebar"
+                  title={t("Sembunyikan Sidebar")}
                 >
                   <PanelLeftClose className="w-5 h-5" />
                 </button>
@@ -475,7 +455,7 @@ export default function App() {
                   id="expand-sidebar-btn"
                   onClick={() => setIsSidebarCollapsed(false)}
                   className="p-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors"
-                  title="Tampilkan Sidebar"
+                  title={t("Tampilkan Sidebar")}
                 >
                   <PanelLeftOpen className="w-5 h-5" />
                 </button>
@@ -491,8 +471,12 @@ export default function App() {
                 
                 return (
                   <React.Fragment key={item.id}>
-                    {item.id === "approval-izin" && !isSidebarCollapsed && (
-                      <div className="px-3 pb-1 pt-4 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Administrasi</div>
+                    {item.section && (
+                      isSidebarCollapsed ? (
+                        <div role="separator" aria-label={t(item.section)} title={t(item.section)} className="mx-2 my-3 border-t border-slate-200" />
+                      ) : (
+                        <div className="px-3 pb-1 pt-4 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400"><span lang={language} dir={language === "ar" ? "rtl" : undefined}>{t(item.section)}</span></div>
+                      )
                     )}
                   <button
                     id={`sidebar-nav-${item.id}`}
@@ -500,7 +484,7 @@ export default function App() {
                       setActivePage(item.id as ActivePage);
                       setIsMobileMenuOpen(false);
                     }}
-                    title={isSidebarCollapsed ? item.label : undefined}
+                    title={isSidebarCollapsed ? t(item.label) : undefined}
                     className={`w-full flex items-center ${
                       isSidebarCollapsed ? "justify-center px-2 py-3" : "gap-3 px-3 py-2"
                     } rounded-xl font-medium text-sm transition-all ${
@@ -512,7 +496,7 @@ export default function App() {
                     <Icon className={`w-4 h-4 shrink-0 ${isActive ? "text-blue-600" : "text-slate-400"}`} />
                     {!isSidebarCollapsed && (
                       <>
-                        <span className="truncate">{item.label}</span>
+                        <span className="truncate" lang={language} dir={language === "ar" ? "rtl" : undefined}>{t(item.label)}</span>
                         {item.adminOnly && !isAdmin && (
                           <span className="ml-auto text-[8px] bg-slate-100 text-slate-500 px-1 py-0.5 rounded uppercase font-bold shrink-0">Lock</span>
                         )}
@@ -525,6 +509,7 @@ export default function App() {
             </nav>
           </div>
 
+          <div className="shrink-0 pt-2 border-t border-slate-100"><LanguageSelector compact={isSidebarCollapsed} /></div>
           {/* Admin Toggle Area — fixed footer; navigation above it scrolls independently. */}
           <div className={`shrink-0 pt-4 border-t border-slate-100 bg-white ${isSidebarCollapsed ? "flex flex-col items-center" : ""}`}>
             {isSidebarCollapsed ? (
@@ -540,14 +525,14 @@ export default function App() {
                 className={`p-2 rounded-xl transition-colors ${
                   isAdmin ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-500 hover:text-slate-800"
                 }`}
-                title={isAdmin ? `Admin: ${adminUser?.nama || "Aktif"} (Klik untuk keluar)` : "Klik untuk Login Admin"}
+                title={isAdmin ? `Admin: ${adminUser?.nama || t("Aktif")} (Klik untuk keluar)` : t("Klik untuk Login Admin")}
               >
                 <ShieldCheck className={`w-5 h-5 ${isAdmin ? "text-blue-600" : "text-slate-400"}`} />
               </button>
             ) : (
               <>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-slate-500">Admin Mode</span>
+                  <span className="text-xs font-semibold text-slate-500"><T>{"Admin Mode"}</T></span>
                   <button
                     id="sidebar-admin-toggle"
                     onClick={() => {
@@ -560,7 +545,7 @@ export default function App() {
                     className={`w-9 h-5 rounded-full p-0.5 transition-colors duration-200 outline-none ${
                       isAdmin ? "bg-blue-600" : "bg-slate-200"
                     }`}
-                    title={isAdmin ? "Matikan Mode Admin" : "Aktifkan Mode Admin"}
+                    title={isAdmin ? t("Matikan Mode Admin") : t("Aktifkan Mode Admin")}
                   >
                     <div className={`bg-white w-4 h-4 rounded-full shadow-sm transform duration-200 ${
                       isAdmin ? "translate-x-4" : "translate-x-0"
@@ -568,7 +553,7 @@ export default function App() {
                   </button>
                 </div>
                 <p className="text-[10px] text-slate-400 font-medium truncate">
-                  {isAdmin ? `Admin: ${adminUser?.nama || "Aktif"}` : "Mode tamu hanya baca"}
+                  {isAdmin ? `Admin: ${adminUser?.nama || t("Aktif")}` : t("Mode tamu hanya baca")}
                 </p>
               </>
             )}
@@ -619,8 +604,8 @@ export default function App() {
                 
                 return (
                   <React.Fragment key={item.id}>
-                    {item.id === "approval-izin" && (
-                      <div className="px-3 pb-1 pt-4 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Administrasi</div>
+                    {item.section && (
+                      <div className="px-3 pb-1 pt-4 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400"><span lang={language} dir={language === "ar" ? "rtl" : undefined}>{t(item.section)}</span></div>
                     )}
                   <button
                     id={`mobile-nav-${item.id}`}
@@ -635,16 +620,17 @@ export default function App() {
                     } ${!showItem ? "opacity-50" : ""}`}
                   >
                     <Icon className="w-4 h-4 text-slate-400" />
-                    <span>{item.label}</span>
+                    <span lang={language} dir={language === "ar" ? "rtl" : undefined}>{t(item.label)}</span>
                   </button>
                   </React.Fragment>
                 );
               })}
             </nav>
 
-            <div className="pt-4 border-t border-slate-100">
+            <div className="pt-3 border-t border-slate-100">
+              <LanguageSelector />
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold text-slate-500">Admin Mode</span>
+                <span className="text-xs font-semibold text-slate-500"><T>{"Admin Mode"}</T></span>
                 <button
                   id="mobile-admin-toggle"
                   onClick={() => {
@@ -665,7 +651,7 @@ export default function App() {
                 </button>
               </div>
               <p className="text-[10px] text-slate-400 font-medium">
-                {isAdmin ? `Admin: ${adminUser?.nama || "Aktif"}` : "Mode tamu hanya baca"}
+                {isAdmin ? `Admin: ${adminUser?.nama || t("Aktif")}` : t("Mode tamu hanya baca")}
               </p>
             </div>
           </div>
@@ -684,7 +670,7 @@ export default function App() {
               id="topheader-toggle-sidebar-btn"
               onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
               className="hidden lg:flex p-1.5 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-              title={isSidebarCollapsed ? "Tampilkan Sidebar Kiri" : "Sembunyikan Sidebar Kiri"}
+              title={isSidebarCollapsed ? t("Tampilkan Sidebar Kiri") : t("Sembunyikan Sidebar Kiri")}
             >
               <PanelLeft className="w-5 h-5 text-slate-600" />
             </button>
@@ -698,61 +684,8 @@ export default function App() {
               <Menu className="w-6 h-6" />
             </button>
 
-            {/* Global Search Autocomplete Bar */}
-            <div className="relative w-64 sm:w-80 md:w-96" ref={headerSuggestionsRef}>
-              <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
-                <Search className="w-4 h-4" />
-              </span>
-              <input 
-                id="global-teacher-search-input"
-                type="text" 
-                placeholder="Cari Nama Guru... (Autocomplete)" 
-                className="w-full pl-9 pr-8 py-2 border border-slate-200 rounded-lg text-xs sm:text-sm bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white text-slate-800 transition-all"
-                value={headerSearch}
-                onChange={(e) => {
-                  setHeaderSearch(e.target.value);
-                  setShowHeaderSuggestions(true);
-                }}
-                onFocus={() => setShowHeaderSuggestions(true)}
-              />
-              {headerSearch && (
-                <button
-                  id="clear-global-search-btn"
-                  onClick={handleClearHeaderTeacher}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-all"
-                  title="Bersihkan pilihan"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-
-              {/* Suggestions dropdown */}
-              {showHeaderSuggestions && filteredHeaderTeachers.length > 0 && (
-                <div className="absolute z-50 left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-y-auto divide-y divide-slate-100">
-                  {filteredHeaderTeachers.map((teacher) => (
-                    <button
-                      key={teacher.nama}
-                      id={`global-suggest-${teacher.nama.replace(/\s+/g, '-').toLowerCase()}`}
-                      onClick={() => handleSelectHeaderTeacher(teacher.nama)}
-                      className="w-full text-left px-4 py-2.5 hover:bg-blue-50/50 flex flex-col transition-colors group"
-                    >
-                      <span className="font-semibold text-xs sm:text-sm text-slate-700 group-hover:text-blue-600 transition-colors">
-                        {teacher.nama}
-                      </span>
-                      <span className="text-[10px] text-slate-400 mt-0.5">
-                        {teacher.mapel_utama} | {teacher.jenjang} {teacher.wali_kelas ? `| Wali ${teacher.wali_kelas}` : ""}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {showHeaderSuggestions && headerSearch.trim() !== "" && filteredHeaderTeachers.length === 0 && (
-                <div className="absolute z-50 left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-lg p-4 text-center text-slate-500 text-xs">
-                  Tidak ada guru "{headerSearch}"
-                </div>
-              )}
-            </div>
+            {/* Local autocomplete state: typing must never recalculate App-wide schedules. */}
+            <TeacherHeaderSearch teachers={teachers} selectedTeacher={selectedTeacher} onSelectTeacher={setSelectedTeacher} />
           </div>
 
           {/* Header Right Content */}
@@ -764,10 +697,10 @@ export default function App() {
               onClick={() => { void (isAdmin ? refreshFromSupabase() : refreshPublicSupabase()).catch(() => {}); }}
               disabled={snapshotLoading}
               className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-200 shadow-xs transition-all"
-              title="Segarkan jadwal langsung dari Supabase"
+              title={t("Segarkan jadwal langsung dari Supabase")}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${snapshotLoading ? "animate-spin" : ""}`} />
-              <span className="hidden sm:inline">Refresh Supabase</span>
+              <span className="hidden sm:inline"><T>{"Refresh Supabase"}</T></span>
             </button>
             <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border bg-indigo-50 text-indigo-700 border-indigo-200 text-xs font-semibold" title="Semua jadwal bersumber dari Supabase">
               <Database className="w-3.5 h-3.5" /> Supabase
@@ -815,6 +748,7 @@ export default function App() {
             {/* Dynamic Page Routing */}
             {activePage === "dashboard" && (
               <Dashboard 
+                calendarAuthEpoch={calendarAuthEpoch}
                 teachers={teachers}
                 schedules={schedules}
                 logs={logs}
@@ -839,6 +773,7 @@ export default function App() {
                 kalenderAkademik={kalenderAkademik}
                 selectedTeacher={selectedTeacher}
                 driveBridgeUrl={apiUrl}
+                onChanged={refreshFromSupabase}
                 onBack={() => setActivePage("dashboard")}
               />
             )}
@@ -866,7 +801,25 @@ export default function App() {
 
             {activePage === "approval-izin" && (
               isAdmin ? (
-                <LeaveApprovalAdmin teachers={teachers} onBack={() => setActivePage("dashboard")} />
+                <LeaveApprovalAdmin
+                  teachers={teachers}
+                  schedules={schedules}
+                  logs={logs}
+                  jadwalInsidental={jadwalInsidental}
+                  kalenderAkademik={kalenderAkademik}
+                  masterRuangan={masterRuangan}
+                  substituteConstraints={substituteConstraints}
+                  onChanged={refreshFromSupabase}
+                  onBack={() => setActivePage("dashboard")}
+                />
+              ) : (
+                <AdminOnlyFallback onBack={() => setActivePage("dashboard")} />
+              )
+            )}
+
+            {activePage === "approved-leave-list" && (
+              isAdmin ? (
+                <ApprovedLeaveMaintenanceAdmin onChanged={refreshFromSupabase} onBack={() => setActivePage("dashboard")} />
               ) : (
                 <AdminOnlyFallback onBack={() => setActivePage("dashboard")} />
               )
@@ -883,7 +836,6 @@ export default function App() {
                   onNavigate={setActivePage}
                   onSelectTeacher={(teacherName) => {
                     setSelectedTeacher(teacherName);
-                    setHeaderSearch(teacherName);
                   }}
                   onBack={() => setActivePage("dashboard")}
                 />
@@ -921,6 +873,10 @@ export default function App() {
                 teachers={teachers}
                 schedules={schedules}
                 masterRuangan={masterRuangan}
+                incidentals={jadwalInsidental}
+                logs={logs}
+                kalenderAkademik={kalenderAkademik}
+                schoolToday={schoolToday}
                 selectedTeacher={selectedTeacher}
                 setSelectedTeacher={setSelectedTeacher}
                 onBack={() => setActivePage("dashboard")}
@@ -1075,12 +1031,31 @@ export default function App() {
             {activePage === "substitute-constraints" && (
               isAdmin ? (
                 <SubstituteConstraintAdmin
+                  teacherDetails={teachers}
+                  schedules={schedules}
+                  incidentals={jadwalInsidental}
+                  logs={logs}
+                  calendar={kalenderAkademik}
+                  substituteConstraints={substituteConstraints}
                   onChanged={async () => {
                     const constraints = await new SupabaseSubstituteConstraintRepository().listActiveConstraints();
                     setSubstituteConstraints(constraints);
+                    await refreshFromSupabase();
                   }}
                   onBack={() => setActivePage("dashboard")}
                 />
+              ) : (
+                <AdminOnlyFallback onBack={() => setActivePage("dashboard")} />
+              )
+            )}
+
+            {activePage === "education-calendar" && (
+              <EducationCalendar key={`edu-cal-${calendarAuthEpoch}`} authEpoch={calendarAuthEpoch} onBack={() => setActivePage("dashboard")} />
+            )}
+
+            {activePage === "education-calendar-admin" && (
+              isAdmin ? (
+                <EducationCalendarAdmin teachers={teachers} schedules={schedules} onBack={() => setActivePage("dashboard")} />
               ) : (
                 <AdminOnlyFallback onBack={() => setActivePage("dashboard")} />
               )
@@ -1218,6 +1193,7 @@ export default function App() {
                   const { context } = await refreshFromSupabase();
                   const matched: AdminAccount = { id: context.user.email || context.user.id, password: "", nama: context.displayName };
                   setIsAdmin(true);
+                  setCalendarAuthEpoch(v => v + 1);
                   setAdminUser(matched);
                   localStorage.setItem("db_admin_user", JSON.stringify(matched));
                   setShowLoginModal(false);
@@ -1277,7 +1253,7 @@ export default function App() {
                   }}
                   className="px-3 py-1.5 hover:bg-slate-100 text-slate-500 font-semibold rounded-lg transition-colors"
                 >
-                  Batal
+                  <T>{"Batal"}</T>
                 </button>
 
                 <button
@@ -1315,7 +1291,7 @@ export default function App() {
                 onClick={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
                 className="px-3.5 py-2 hover:bg-slate-100 text-slate-600 font-semibold text-xs rounded-xl transition-all"
               >
-                Batal
+                <T>{"Batal"}</T>
               </button>
               <button
                 id="confirm-ok-btn"
@@ -1347,7 +1323,7 @@ function AdminOnlyFallback({ onBack }: { onBack: () => void }) {
         onClick={onBack}
         className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 px-4 rounded-xl transition-all"
       >
-        Kembali ke Dashboard
+        <T>{"Kembali ke Dashboard"}</T>
       </button>
     </div>
   );

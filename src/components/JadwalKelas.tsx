@@ -1,15 +1,19 @@
 import React, { useState, useMemo } from "react";
 import { isGrade1Or2 } from "../domain/class";
 import { Teacher, ScheduleItem, LogIzinItem, MasterRuanganItem, KalenderAkademikItem, JadwalInsidentalItem, getRoomDisplayName, normalizeDay, isSameDay } from "../types";
-import { ArrowLeft, AlertCircle, Search, Users, Download, Loader2, X, Clock, User, Calendar, GraduationCap, Pencil } from "lucide-react";
+import { ArrowLeft, AlertCircle, Search, Users, Download, Loader2, X, Clock, User, Calendar, GraduationCap, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
 import { JAM_TIME_MAP, SCHOOL_DAYS as HARI_LIST, TEACHING_JPS as JAM_LIST } from "../constants/schedule";
 import { classifyJadwalKelasCell, JADWAL_KELAS_CELL_VISUALS } from "../domain/schedule/jadwalKelasVisualSemantics";
 import { downloadElementAsPng } from "../infrastructure/browser/exportElementJpeg";
 import { getErrorMessage } from "../domain/errorMessage";
 import { buildClassWeekMap, type ClassWeekMap } from "../domain/schedule/classWeek";
-import { getSchoolWeekDateStrings } from "../domain/date";
+import { getSchoolTodayISO } from "../domain/date";
+import { teacherWeekDays } from "../domain/schedule/teacherWeeklyView";
 import { parseScheduleClassMode } from "../domain/schedule/classMode";
 import { compactSubjectLabel } from "../domain/schedule/displayLabels";
+
+import { T, useLanguage } from '../i18n/LanguageProvider';
+import { displaySchoolWeekRange } from '../i18n/translations';
 
 interface JadwalKelasProps {
   teachers: Teacher[];
@@ -196,11 +200,13 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
   onUpdateSchedules,
   onEditSchedule,
 }) => {
+  const {t,language} = useLanguage();
   const [selectedClass, setSelectedClass] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [scheduleViewMode, setScheduleViewMode] = useState<"MASTER" | "THIS_WEEK">("MASTER");
+  const [scheduleViewMode, setScheduleViewMode] = useState<"MASTER" | "THIS_WEEK">("THIS_WEEK");
+  const [weekOffset, setWeekOffset] = useState(0);
 
   // Companion edit state
   const [editingItem, setEditingItem] = useState<ScheduleItem | null>(null);
@@ -404,11 +410,16 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
     return map;
   }, [classSchedules, isGrade12Class]);
 
-  const effectiveWeekReference = weekReferenceDate || schoolToday || new Date().toISOString().slice(0, 10);
+  // The class and teacher timetables intentionally share the SAME Jakarta
+  // weekend/week-offset rule. Saturday and Sunday default to the next Mon–Fri;
+  // on school days the current teaching week is shown. The weekOffset is user
+  // controlled and is never reset just because the schedule mode changes.
+  const referenceSchoolDay = weekReferenceDate || schoolToday || getSchoolTodayISO();
   const schoolWeekDates = useMemo(
-    () => getSchoolWeekDateStrings(effectiveWeekReference),
-    [effectiveWeekReference],
+    () => teacherWeekDays(referenceSchoolDay, weekOffset),
+    [referenceSchoolDay, weekOffset],
   );
+  const effectiveWeekReference = schoolWeekDates[0].dateStr;
   const classWeekMap = useMemo<ClassWeekMap>(() => (
     selectedClass
       ? buildClassWeekMap({
@@ -422,17 +433,8 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
       : {}
   ), [selectedClass, effectiveWeekReference, schedules, jadwalInsidental, logs, kalenderAkademik]);
 
-  const weekDateByDay = useMemo(() => Object.fromEntries(schoolWeekDates.map((entry) => [entry.dayName, entry.dateStr])), [schoolWeekDates]);
-
-  const weekRangeLabel = useMemo(() => {
-    if (!schoolWeekDates.length) return "";
-    const formatter = new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "short", year: "numeric" });
-    const parse = (value: string) => {
-      const [year, month, day] = value.split("-").map(Number);
-      return new Date(year, month - 1, day);
-    };
-    return `${formatter.format(parse(schoolWeekDates[0].dateStr))} – ${formatter.format(parse(schoolWeekDates[schoolWeekDates.length - 1].dateStr))}`;
-  }, [schoolWeekDates]);
+  const weekDateByDay = useMemo(() => Object.fromEntries(schoolWeekDates.map((entry) => [entry.name, entry.dateStr])), [schoolWeekDates]);
+  const weekRangeLabel = displaySchoolWeekRange(schoolWeekDates[0].dateStr, schoolWeekDates[4].dateStr, language);
 
   // Map full name to nickname ("Panggilan")
   const getTeacherDisplayName = (fullName: string): string => {
@@ -576,7 +578,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
     };
   };
 
-  // Prefer the concrete dated time in "Minggu Ini"; column time is only a
+  // Prefer the concrete dated time in "Jadwal Insidental"; column time is only a
   // baseline and may differ after a one-day schedule adjustment.
   const classCellTime = (items: ScheduleItem[], fallback: string): string => {
     if (scheduleViewMode === "MASTER") return fallback;
@@ -594,7 +596,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
     try {
       await downloadElementAsPng(
         element,
-        `Jadwal_Kelas_${selectedClass.replace(/\s+/g, "_")}_${scheduleViewMode === "MASTER" ? "Asli" : "Minggu_Ini"}.png`,
+        `Jadwal_Kelas_${selectedClass.replace(/\s+/g, "_")}_${scheduleViewMode === "MASTER" ? "Normal" : `Insidental_${effectiveWeekReference}`}.png`,
       );
     } catch (error) {
       console.error("Gagal mendownload gambar:", error);
@@ -614,11 +616,11 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
           className="flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-blue-600 bg-white px-4 py-2 rounded-xl border border-slate-200 hover:border-blue-100 shadow-sm transition-all self-start"
         >
           <ArrowLeft className="w-4 h-4" />
-          Kembali ke Dashboard
+          <T>{"Kembali ke Dashboard"}</T>
         </button>
 
         <div className="flex items-center gap-2 text-sm font-medium text-slate-400">
-          <span>Jadwal Pelajaran per Kelas</span>
+          <span><T>{"Jadwal Pelajaran per Kelas"}</T></span>
         </div>
       </div>
 
@@ -629,7 +631,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
           <div>
             <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
               <Users className="w-5 h-5 text-blue-600" />
-              Jadwal Lengkap per Kelas
+              <T>{"Jadwal Lengkap per Kelas"}</T>
             </h2>
             <p className="text-sm text-slate-500 mt-1">
               Pilih kelas lewat menu drop-down atau cari dengan mengetik untuk melihat jadwal mingguan lengkap.
@@ -715,30 +717,34 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
 
         {selectedClass ? (
           <div className="space-y-6">
-            {/* Master vs effective-week selector */}
-            <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="text-xs font-black uppercase tracking-wider text-slate-500">Mode Jadwal Kelas</div>
-                <div className="mt-1 text-sm font-semibold text-slate-700">
-                  {scheduleViewMode === "MASTER" ? "Jadwal asli / master mingguan" : `Jadwal efektif minggu ini • ${weekRangeLabel}`}
-                </div>
-              </div>
-              <div className="inline-flex rounded-xl bg-slate-100 p-1" role="group" aria-label="Pilih mode jadwal kelas">
+            {/* Match Jadwal Lengkap Guru: modes + Jakarta school-week navigation. */}
+            <div className="space-y-3 rounded-2xl border border-blue-100 bg-slate-50 p-4 sm:p-5">
+              <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Pilih mode jadwal kelas">
                 <button
                   type="button"
                   onClick={() => setScheduleViewMode("MASTER")}
-                  className={`rounded-lg px-4 py-2 text-xs font-black transition ${scheduleViewMode === "MASTER" ? "bg-white text-blue-700 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                  aria-pressed={scheduleViewMode === "MASTER"}
+                  className={`rounded-xl px-4 py-2 text-sm font-bold transition ${scheduleViewMode === "MASTER" ? "bg-blue-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-blue-50"}`}
                 >
-                  Jadwal Asli
+                  Jadwal Normal
                 </button>
                 <button
                   type="button"
                   onClick={() => setScheduleViewMode("THIS_WEEK")}
-                  className={`rounded-lg px-4 py-2 text-xs font-black transition ${scheduleViewMode === "THIS_WEEK" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                  aria-pressed={scheduleViewMode === "THIS_WEEK"}
+                  className={`rounded-xl px-4 py-2 text-sm font-bold transition ${scheduleViewMode === "THIS_WEEK" ? "bg-blue-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-blue-50"}`}
                 >
-                  Minggu Ini
+                  <T>{"Jadwal Insidental"}</T>
                 </button>
               </div>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button type="button" onClick={() => setWeekOffset((value) => value - 1)} className="rounded-xl border border-slate-200 bg-white p-2" aria-label="Minggu sebelumnya" title="Minggu sebelumnya"><ChevronLeft className="h-5 w-5" /></button>
+                <span className="text-sm font-black text-slate-800" aria-live="polite">{weekRangeLabel}</span>
+                <button type="button" onClick={() => setWeekOffset((value) => value + 1)} className="rounded-xl border border-slate-200 bg-white p-2" aria-label="Minggu berikutnya" title="Minggu berikutnya"><ChevronRight className="h-5 w-5" /></button>
+                <button type="button" onClick={() => setWeekOffset(0)} className="text-xs font-bold text-blue-700 hover:underline"><T>{"Minggu default"}</T></button>
+                <span className="text-xs text-slate-500"><T>{"Sabtu/Minggu otomatis menampilkan minggu depan • Zona Jakarta"}</T></span>
+              </div>
+              <p className="text-xs text-slate-500">{scheduleViewMode === "MASTER" ? "Jadwal master mingguan tanpa perubahan bertanggal." : `Jadwal efektif ${weekRangeLabel}, termasuk insidental, badal, dan kalender akademik.`}</p>
             </div>
 
             {/* Download Button Row */}
@@ -752,12 +758,12 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                 {isDownloading ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Menyiapkan Berkas...
+                    <T>{"Menyiapkan Berkas..."}</T>
                   </>
                 ) : (
                   <>
                     <Download className="w-3.5 h-3.5" />
-                    Unduh Jadwal Kelas (PNG)
+                    <T>{"Unduh Jadwal Kelas (PNG)"}</T>
                   </>
                 )}
               </button>
@@ -797,7 +803,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                     </span>
                   </div>
                   <p className="text-xs font-medium text-slate-500 mt-1.5">
-                    Istirahat: {classType === "Ikhwan" ? "09:40 - 10:00" : classType === "Akhwat" ? "08:40 - 09:00" : "Ikhwan: 09:40 - 10:00, Akhwat: 08:40 - 09:00"}
+                    <T>{"Istirahat:"}</T> {classType === "Ikhwan" ? "09:40 - 10:00" : classType === "Akhwat" ? "08:40 - 09:00" : "Ikhwan: 09:40 - 10:00, Akhwat: 08:40 - 09:00"}
                   </p>
                   <p className="text-xs font-medium text-slate-500">
                     Ishoma: 12:00 - 13:00 (Harian)
@@ -805,23 +811,23 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                 </div>
 
                 <div className="bg-slate-900 text-white px-5 py-3 rounded-xl shadow-xs text-center min-w-[120px]">
-                  <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">Durasi</span>
-                  <span className="text-2xl font-black">5 Hari</span>
-                  <span className="block text-[10px] text-slate-400">Senin - Jumat</span>
+                  <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider"><T>{"Durasi"}</T></span>
+                  <span className="text-2xl font-black"><T>{"5 Hari"}</T></span>
+                  <span className="block text-[10px] text-slate-400"><T>{"Senin - Jumat"}</T></span>
                 </div>
               </div>
 
               {/* Legend */}
               <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs font-bold text-slate-500 p-3.5 border border-slate-100 rounded-xl bg-slate-50/50">
                 <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-blue-50 border border-blue-200"></span>Normal</span>
-                <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-emerald-50 border border-emerald-200"></span>Kelas Gabung</span>
-                <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-violet-50 border border-violet-200"></span>Kelas Bergantian</span>
+                <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-emerald-50 border border-emerald-200"></span><T>{"Kelas Gabung"}</T></span>
+                <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-violet-50 border border-violet-200"></span><T>{"Kelas Bergantian"}</T></span>
                 <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-red-50 border border-red-200"></span>Bentrok</span>
                 <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-yellow-50 border border-yellow-300"></span>Guru Badal (minggu berjalan)</span>
-                {scheduleViewMode === "THIS_WEEK" && <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-indigo-50 border border-indigo-300"></span>Jadwal Insidental</span>}
-                {scheduleViewMode === "THIS_WEEK" && <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-rose-50 border border-rose-300"></span>Kalender Akademik</span>}
-                <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-slate-100 border border-slate-200"></span>Istirahat / Ishoma Ikhwan</span>
-                <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-purple-100 border border-purple-200"></span>Istirahat / Ishoma Akhwat</span>
+                {scheduleViewMode === "THIS_WEEK" && <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-indigo-50 border border-indigo-300"></span><T>{"Jadwal Insidental"}</T></span>}
+                {scheduleViewMode === "THIS_WEEK" && <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-rose-50 border border-rose-300"></span><T>{"Kalender Akademik"}</T></span>}
+                <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-slate-100 border border-slate-200"></span><T>{"Istirahat / Ishoma Ikhwan"}</T></span>
+                <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-purple-100 border border-purple-200"></span><T>{"Istirahat / Ishoma Akhwat"}</T></span>
               </div>
 
               {/* DESKTOP 2D GRID TABLE WITH DYNAMIC CHRONOLOGICAL COLUMNS */}
@@ -865,7 +871,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                     {["Senin", "Selasa", "Rabu", "Kamis"].map(hari => (
                       <tr key={hari} className="hover:bg-slate-50/50 transition-colors">
                         <td className="p-4 font-black text-slate-700 bg-slate-100/50 text-center border-r border-slate-200">
-                          <div>{hari}</div>
+                          <div>{t(hari)}</div>
                           {scheduleViewMode === "THIS_WEEK" && weekDateByDay[hari] && <div className="mt-0.5 text-[9px] font-bold text-slate-400">{weekDateByDay[hari].split("-").reverse().join("/")}</div>}
                         </td>
 
@@ -942,7 +948,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                     {/* 2. Special Separator for Friday */}
                     <tr className="bg-slate-200 border-y border-slate-300">
                       <td colSpan={9} className="p-3 font-black text-xs uppercase tracking-wider text-slate-800 text-center bg-slate-200 select-none">
-                        KHUSUS HARI JUM'AT
+                        <T>{"KHUSUS HARI JUM'AT"}</T>
                       </td>
                     </tr>
 
@@ -971,7 +977,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                     {/* 4. Friday Row */}
                     <tr className="hover:bg-slate-50/50 transition-colors bg-blue-50/5">
                       <td className="p-4 font-black text-slate-700 bg-slate-100/50 text-center border-r border-slate-200">
-                        <div>Jumat</div>
+                        <div><T>{"Jumat"}</T></div>
                         {scheduleViewMode === "THIS_WEEK" && weekDateByDay.Jumat && <div className="mt-0.5 text-[9px] font-bold text-slate-400">{weekDateByDay.Jumat.split("-").reverse().join("/")}</div>}
                       </td>
                       {fridayColumns.map((col, idx) => {
@@ -994,7 +1000,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                         if (showAsPulang) {
                           return (
                             <td key={`cell-fri-${idx}`} className="p-3 border-r border-slate-200 bg-slate-50/20 text-center text-xs text-slate-300 italic align-middle select-none">
-                              <div className="font-semibold text-slate-400">Pulang</div>
+                              <div className="font-semibold text-slate-400"><T>{"Pulang"}</T></div>
                               <div className="text-[9px] mt-0.5 text-slate-400">{col.timeRange}</div>
                             </td>
                           );
@@ -1076,11 +1082,11 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                     <div key={hari} className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs bg-white">
                       <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex justify-between items-center">
                         <div>
-                          <span className="font-bold text-slate-800">{hari}</span>
+                          <span className="font-bold text-slate-800">{t(hari)}</span>
                           {scheduleViewMode === "THIS_WEEK" && weekDateByDay[hari] && <div className="text-[9px] font-bold text-slate-400">{weekDateByDay[hari].split("-").reverse().join("/")}</div>}
                         </div>
                         <span className="text-xs text-blue-600 bg-blue-50 font-black px-2.5 py-0.5 rounded-full">
-                          {scheduleViewMode === "MASTER" ? "Jadwal Asli" : "Minggu Ini"}
+                          {scheduleViewMode === "MASTER" ? "Jadwal Normal" : "Jadwal Insidental"}
                         </span>
                       </div>
 
@@ -1112,7 +1118,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                                   <span className="font-medium text-slate-400">
                                     {col.type === "jp" ? `Jam ${col.jpNumber}` : col.label} ({col.timeRange})
                                   </span>
-                                  <span className="font-semibold text-slate-500">Pulang</span>
+                                  <span className="font-semibold text-slate-500"><T>{"Pulang"}</T></span>
                                 </div>
                               );
                             }
@@ -1206,7 +1212,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
           <div className="text-center py-10">
             <AlertCircle className="w-10 h-10 text-slate-300 mx-auto mb-2" />
             <p className="text-slate-500 font-medium">Belum memilih kelas</p>
-            <p className="text-xs text-slate-400 mt-1">Silakan pilih kelas melalui menu drop-down atau cari kelas pada kolom pencarian di atas.</p>
+            <p className="text-xs text-slate-400 mt-1"><T>{"Silakan pilih kelas melalui menu drop-down atau cari kelas pada kolom pencarian di atas."}</T></p>
           </div>
         )}
       </div>
@@ -1226,7 +1232,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                     {editingItem.kelas} &bull; {editingItem.mapel}
                   </h3>
                   <p className="text-xs text-slate-400 font-medium mt-1">
-                    Hari {editingItem.hari}, Jam ke-{editingItem.jam_ke} ({editingItem.mulai} - {editingItem.selesai})
+                    {t("Hari")} {t(editingItem.hari)}, {t("Jam ke-")}{editingItem.jam_ke} ({editingItem.mulai} - {editingItem.selesai})
                   </p>
                 </div>
                 <button
@@ -1256,7 +1262,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
               {/* List of Teachers */}
               <div className="space-y-3">
                 <h4 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider">
-                  Daftar Guru Aktif
+                  <T>{"Daftar Guru Aktif"}</T>
                 </h4>
 
                 <div className="space-y-2 divide-y divide-slate-100">
@@ -1269,12 +1275,12 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                           {editingItem.guru1 || "Tanpa Guru Utama"}
                         </span>
                         <span className="block text-[10px] font-extrabold text-emerald-600 uppercase tracking-wide">
-                          Guru Utama (Main Teacher)
+                          <T>{"Guru Utama (Main Teacher)"}</T>
                         </span>
                       </div>
                     </div>
                     <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded-lg">
-                      {teacherJpMap[editingItem.guru1?.trim()] || 0} JP
+                      {teacherJpMap[editingItem.guru1?.trim()] || 0} <T>{"JP"}</T>
                     </span>
                   </div>
 
@@ -1290,13 +1296,13 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                           <div>
                             <span className="text-xs font-bold text-slate-800">{name}</span>
                             <span className="block text-[10px] font-extrabold text-blue-600 uppercase tracking-wide">
-                              Companion {idx + 1}
+                              <T>{"Companion"}</T> {idx + 1}
                             </span>
                           </div>
                         </div>
                         <div className="flex items-center gap-2 animate-fade-in">
                           <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded-lg">
-                            {teacherJpMap[name] || 0} JP
+                            {teacherJpMap[name] || 0} <T>{"JP"}</T>
                           </span>
                           <button
                             onClick={() => handleRemoveCompanion(editingItem.id, field)}
@@ -1317,7 +1323,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
               {/* Add Companion Teacher Select Input */}
               <div className="space-y-2">
                 <label className="text-xs font-extrabold text-slate-400 uppercase tracking-wider block">
-                  Tambah Guru Pendamping (Team Teaching)
+                  <T>{"Tambah Guru Pendamping (Team Teaching)"}</T>
                 </label>
                 <div className="relative">
                   <select
@@ -1369,7 +1375,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                   </select>
                 </div>
                 <p className="text-[10px] text-slate-400 font-semibold">
-                  Masing-masing nama guru dilengkapi dengan total JP mengajar minggu ini.
+                  <T>{"Masing-masing nama guru dilengkapi dengan total JP mengajar minggu ini."}</T>
                 </p>
               </div>
             </div>
@@ -1398,15 +1404,15 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
             <div className="bg-slate-900 text-white p-5 flex justify-between items-start shrink-0">
               <div>
                 <span className="text-[10px] font-extrabold uppercase tracking-widest bg-blue-600 px-2.5 py-0.5 rounded-full">
-                  Detail Pelajaran
+                  <T>{"Detail Pelajaran"}</T>
                 </span>
                 <h3 className="text-xl font-black mt-2 leading-tight flex items-center gap-2">
                   <Calendar className="w-5 h-5 text-blue-400" />
-                  Hari {selectedDetail.hari}, Jam ke-{selectedDetail.jam}
+                  {t("Hari")} {t(selectedDetail.hari)}, {t("Jam ke-")}{selectedDetail.jam}
                 </h3>
                 <p className="text-xs text-slate-400 font-medium mt-1 flex items-center gap-1.5">
                   <Clock className="w-3.5 h-3.5 text-slate-400" />
-                  Waktu: {selectedDetail.waktu}
+                  <T>{"Waktu:"}</T> {selectedDetail.waktu}
                 </p>
               </div>
               <button
@@ -1506,7 +1512,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                           </div>
                           {group.ruangan && (
                             <span className="text-xs text-slate-500 font-medium mt-1 block">
-                              Ruangan: <span className="font-semibold text-slate-700">{getRoomDisplayName(group.ruangan, masterRuangan)}</span>
+                              <T>{"Ruangan:"}</T> <span className="font-semibold text-slate-700">{getRoomDisplayName(group.ruangan, masterRuangan)}</span>
                             </span>
                           )}
                           {group.keterangan_khusus && (
@@ -1516,12 +1522,12 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                           )}
                           {group.kelasgabung && (
                             <span className="mt-1.5 text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded uppercase tracking-wider inline-block mr-1">
-                              Kelas Gabung
+                              <T>{"Kelas Gabung"}</T>
                             </span>
                           )}
                           {group.isBergantian && (
                             <span className="mt-1.5 text-[10px] bg-violet-100 text-violet-900 border border-violet-200 font-bold px-2 py-0.5 rounded uppercase tracking-wider inline-block">
-                              Kelas Bergantian
+                              <T>{"Kelas Bergantian"}</T>
                             </span>
                           )}
                         </div>
@@ -1530,7 +1536,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                         <div className="space-y-2">
                           <span className="text-xs font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-1">
                             <Users className="w-3.5 h-3.5 text-slate-400" />
-                            Guru Pengampu (Team Teaching)
+                            <T>{"Guru Pengampu (Team Teaching)"}</T>
                           </span>
 
                           <div className="space-y-2">
@@ -1556,7 +1562,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                               );
                             })}
                             {group.teachers.length === 0 && (
-                              <p className="text-xs text-slate-400 italic">Tidak ada guru terdaftar</p>
+                              <p className="text-xs text-slate-400 italic"><T>{"Tidak ada guru terdaftar"}</T></p>
                             )}
                           </div>
                         </div>
@@ -1588,7 +1594,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                 onClick={() => setSelectedDetail(null)}
                 className="bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition-all cursor-pointer"
               >
-                Tutup Detail
+                <T>{"Tutup Detail"}</T>
               </button>
             </div>
           </div>

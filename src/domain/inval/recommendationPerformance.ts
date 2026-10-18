@@ -5,6 +5,12 @@ import {
   isITBACoreSubject,
 } from "../teacher";
 import type { EffectiveScheduleItem } from "../schedule/effectiveSchedule";
+/** Minimal attendance projection; never expose private leave reasons in recommendations. */
+export interface ApprovedLeavePeriodAvailability {
+  teacherId: string;
+  date: string;
+  period: number;
+}
 
 export interface GeneratedInvalRowForRecommendation {
   jam_ke: number;
@@ -149,6 +155,7 @@ export function buildInvalRecommendationDayIndex(args: {
   effectiveSchedulesForDate: EffectiveScheduleItem[];
   logs: LogIzinItem[];
   date: string;
+  approvedLeavePeriods?: ApprovedLeavePeriodAvailability[];
 }): InvalRecommendationDayIndex {
   const { teachers, effectiveSchedulesForDate, logs, date } = args;
 
@@ -181,6 +188,18 @@ export function buildInvalRecommendationDayIndex(args: {
     }
     savedSubstituteTeachersByPeriod.get(period)!.add(substituteKey);
   });
+
+  // Unlike coverage_slots, leave_request_periods includes FREE periods.
+  // Use the canonical teacher UUID so a JP FREE still blocks recommendation.
+  const namesById = new Map(teachers.filter(t=>t.id).map(t=>[String(t.id), normalizeTeacherKey(t.nama)]));
+  for (const leave of args.approvedLeavePeriods || []) {
+    if (leave.date !== date) continue;
+    const teacherKey = namesById.get(leave.teacherId);
+    if (!teacherKey || !Number.isInteger(leave.period)) continue;
+    const periods = absentJamKeByTeacher.get(teacherKey) || new Set<number>();
+    periods.add(leave.period);
+    absentJamKeByTeacher.set(teacherKey, periods);
+  }
 
   const schedulesByTeacher = new Map<string, EffectiveScheduleItem[]>();
   effectiveSchedulesForDate.forEach((slot) => {

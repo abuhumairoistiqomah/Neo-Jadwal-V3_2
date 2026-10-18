@@ -34,6 +34,7 @@ import {
   type InvalWriteMetadata,
 } from "../domain/inval/invalWrite";
 
+import { T } from '../i18n/LanguageProvider';
 function hasStaffRole(context: CurrentUserContext | null): boolean {
   return Boolean(context?.roles.some((role) => role === "ADMIN" || role === "WAKASEK"));
 }
@@ -235,7 +236,7 @@ export default function SupabaseInvalCutover({ writeEnabled = false }: { writeEn
                 <div className="text-sm text-emerald-400 mt-1">Roles: {userContext.roles.join(", ") || "none"}</div>
               </div>
               <div className="flex gap-2">
-                <button disabled={loading || !hasStaffRole(userContext)} onClick={() => void handleRefresh()} className="px-4 py-2 rounded-xl bg-indigo-700 hover:bg-indigo-600 disabled:opacity-40 font-bold flex items-center gap-2"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /> Refresh Supabase</button>
+                <button disabled={loading || !hasStaffRole(userContext)} onClick={() => void handleRefresh()} className="px-4 py-2 rounded-xl bg-indigo-700 hover:bg-indigo-600 disabled:opacity-40 font-bold flex items-center gap-2"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /> <T>{"Refresh Supabase"}</T></button>
                 <button onClick={() => void handleLogout()} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 font-bold flex items-center gap-2"><LogOut className="w-4 h-4" /> Logout</button>
               </div>
             </div>

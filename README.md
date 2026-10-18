@@ -1,3 +1,11 @@
+> **V3.16 RC1:** Lihat [TRACE_V3_16_EDUCATION_CALENDAR.md](TRACE_V3_16_EDUCATION_CALENDAR.md) untuk Kalender Pendidikan, Smart Audience Tags AND/OR, migration SQL, dan release gate.
+
+# E-JADWAL V3.15 — Weekly Effective Schedule & Official-Duty Badal
+
+**Release candidate:** based on stable V3.14.6 RC3.4.9.5. This package includes all previous source and database migrations.
+
+Read `TRACE_V3_15_WEEKLY_OFFICIAL_DUTY.md` before staging/deployment. Apply `supabase/migrations/202610170001_v3_15_official_duty_badal.sql` **only after** all earlier migrations are installed. Test on staging before applying to production. Full npm checks and live SQL tests must be performed on your computer/staging; do not assume this release is production stable.
+
 ## RC3.4.9.5 – Statistik Alasan Izin Lengkap
 
 Lihat `TRACE_V3_14_6_RC3_4_9_5_ALL_LEAVE_REASONS.md` untuk perubahan laporan statistik individu.

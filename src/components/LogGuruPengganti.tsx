@@ -10,6 +10,9 @@ import { groupSubstituteLogsForBroadcast } from "../domain/inval/broadcastGroupi
 import { getPublicScheduleUrl } from "../domain/whatsappPublicUrl";
 import { SearchableSelect } from "./ui/SearchableSelect";
 
+import { T } from '../i18n/LanguageProvider';
+
+
 interface LogGuruPenggantiProps {
   logs: LogIzinItem[];
   teachers?: Teacher[];
@@ -244,7 +247,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
             </div>}
             {editError && <p role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3 break-words">{editError}</p>}
             <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={closeEditor} disabled={savingEdit} className="px-4 py-2 border rounded-xl font-semibold">Batal</button>
+              <button type="button" onClick={closeEditor} disabled={savingEdit} className="px-4 py-2 border rounded-xl font-semibold"><T>{"Batal"}</T></button>
               <button type="button" onClick={() => void saveEditedSubstitute()} disabled={savingEdit || !newTeacherId}
                 className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold disabled:opacity-50 flex gap-2 items-center">
                 {savingEdit && <Loader2 className="w-4 h-4 animate-spin" />} Simpan Perubahan
@@ -261,7 +264,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
           className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-indigo-600 bg-white px-4 py-2 rounded-xl border border-gray-100 hover:border-indigo-100 shadow-sm transition-all self-start"
         >
           <ArrowLeft className="w-4 h-4" />
-          Kembali ke Dashboard
+          <T>{"Kembali ke Dashboard"}</T>
         </button>
 
         <span className="text-sm font-semibold text-gray-400 flex items-center gap-1.5">
@@ -361,8 +364,8 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                       <tr className="bg-gray-50/50 text-[11px] font-bold text-gray-400 uppercase border-b border-gray-100">
                         <th className="p-3 w-16 text-center">Jam</th>
                         <th className="p-3">Guru Berhalangan</th>
-                        <th className="p-3">Alasan</th>
-                        <th className="p-3">Mata Pelajaran</th>
+                        <th className="p-3"><T>{"Alasan"}</T></th>
+                        <th className="p-3"><T>{"Mata Pelajaran"}</T></th>
                         <th className="p-3">Kelas</th>
                         <th className="p-3">Tugas / Link</th>
                         <th className="p-3">Guru Pengganti (Inval)</th>
@@ -465,7 +468,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                       <div className="flex justify-between items-start gap-2">
                         <div>
                           <span className="bg-indigo-50 text-indigo-800 font-extrabold text-[10px] px-2 py-0.5 rounded block w-max mb-1">
-                            Jam Ke-{log.jam_ke} ({JAM_TIME_MAP[log.jam_ke]})
+                            <T>{"Jam Ke-"}</T>{log.jam_ke} ({JAM_TIME_MAP[log.jam_ke]})
                           </span>
                           <h4 className="font-bold text-gray-800 text-xs">Izin: {log.guru_izin}</h4>
                           <span className="text-[10px] text-gray-400 italic">Alasan: {log.alasan}</span>

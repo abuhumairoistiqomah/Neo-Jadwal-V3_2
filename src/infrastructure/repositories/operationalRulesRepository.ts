@@ -31,6 +31,7 @@ export interface SubstituteConstraintAdminRow {
   reason: string;
   override_allowed: boolean;
   blocks_normal_teaching: boolean;
+  requires_badal?: boolean;
   is_active: boolean;
   created_at?: string | null;
   updated_at?: string | null;
@@ -50,6 +51,7 @@ export interface SubstituteConstraintWriteInput {
   reason: string;
   overrideAllowed?: boolean;
   blocksNormalTeaching?: boolean;
+  requiresBadal?: boolean;
   isActive?: boolean;
 }
 
@@ -177,6 +179,7 @@ export class OperationalRulesRepository {
           reason,
           override_allowed: Boolean(input.overrideAllowed),
           blocks_normal_teaching: Boolean(input.blocksNormalTeaching),
+          requires_badal: Boolean(input.blocksNormalTeaching && input.requiresBadal),
           is_active: input.isActive !== false,
           deleted_at: null,
         }
@@ -192,6 +195,7 @@ export class OperationalRulesRepository {
           reason,
           override_allowed: Boolean(input.overrideAllowed),
           blocks_normal_teaching: Boolean(input.blocksNormalTeaching),
+          requires_badal: Boolean(input.blocksNormalTeaching && input.requiresBadal),
           is_active: input.isActive !== false,
           deleted_at: null,
         };

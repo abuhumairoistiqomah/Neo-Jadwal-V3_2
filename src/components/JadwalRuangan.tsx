@@ -34,6 +34,8 @@ import {
   X
 } from "lucide-react";
 
+import { T, useLanguage } from '../i18n/LanguageProvider';
+
 export { matchRoomId };
 
 interface JadwalRuanganProps {
@@ -54,6 +56,7 @@ export function JadwalRuangan({
   onBack,
   onChanged = () => {},
 }: JadwalRuanganProps) {
+  const {t} = useLanguage();
   const [canEditRooms, setCanEditRooms] = useState(false);
   const [roomEditMode, setRoomEditMode] = useState(false);
   const [editingRoomSlot, setEditingRoomSlot] = useState<{ date: string; period: number; initialClass?: string } | null>(null);
@@ -378,7 +381,7 @@ export function JadwalRuangan({
           </div>
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-              Jadwal Penggunaan Ruangan
+              <T>{"Jadwal Penggunaan Ruangan"}</T>
             </h1>
             <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
               Visualisasi pemakaian ruang moving &amp; shared selama satu minggu pembelajaran
@@ -390,7 +393,7 @@ export function JadwalRuangan({
         <div className="flex flex-col gap-1 min-w-[240px] sm:max-w-xs">
           <label htmlFor="room-selector" className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
             <MapPin className="w-3.5 h-3.5 text-blue-600" />
-            Pilih Ruangan:
+            <T>{"Pilih Ruangan:"}</T>
           </label>
           <select
             id="room-selector"
@@ -471,7 +474,7 @@ export function JadwalRuangan({
             <div className="flex items-center gap-3 border-l border-slate-100 pl-4">
               <div className="text-right">
                 <span className="text-xs text-slate-400 font-medium block">Total Pemakaian</span>
-                <span className="text-lg font-bold text-slate-800">{totalWeeklySlots} Slot / Minggu</span>
+                <span className="text-lg font-bold text-slate-800">{totalWeeklySlots} <T>{"Slot / Minggu"}</T></span>
               </div>
             </div>
           </div>
@@ -480,7 +483,7 @@ export function JadwalRuangan({
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-center items-center gap-3">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
               <CalendarDays className="w-4 h-4 text-blue-600" />
-              Minggu Pembelajaran
+              <T>{"Minggu Pembelajaran"}</T>
             </span>
             <div className="flex items-center gap-2 w-full justify-between">
               <button
@@ -489,7 +492,7 @@ export function JadwalRuangan({
                 title="Minggu Sebelumnya"
               >
                 <ChevronLeft className="w-4 h-4" />
-                <span className="hidden sm:inline">Sebelumnya</span>
+                <span className="hidden sm:inline"><T>{"Sebelumnya"}</T></span>
               </button>
 
               <div className="text-center">
@@ -501,7 +504,7 @@ export function JadwalRuangan({
                     onClick={() => setWeekOffset(0)}
                     className="text-[10px] font-bold text-blue-600 hover:underline mt-0.5"
                   >
-                    Kembali ke Minggu Ini
+                    <T>{"Kembali ke Minggu Ini"}</T>
                   </button>
                 )}
               </div>
@@ -511,7 +514,7 @@ export function JadwalRuangan({
                 className="p-1.5 sm:px-2 py-1 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 text-xs font-semibold flex items-center gap-1 transition-all"
                 title="Minggu Berikutnya"
               >
-                <span className="hidden sm:inline">Berikutnya</span>
+                <span className="hidden sm:inline"><T>{"Berikutnya"}</T></span>
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
@@ -521,7 +524,7 @@ export function JadwalRuangan({
       )}
 
       {canEditRooms && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-900">
-        <div><strong>Edit ruangan hanya untuk minggu terpilih.</strong> Perubahan disimpan sebagai insidental per tanggal, tidak mengubah master. Slot kosong dapat dipakai untuk memindahkan kelas yang sudah terjadwal atau menambah sesi baru.</div>
+        <div><strong><T>{"Edit ruangan hanya untuk minggu terpilih."}</T></strong> Perubahan disimpan sebagai insidental per tanggal, tidak mengubah master. Slot kosong dapat dipakai untuk memindahkan kelas yang sudah terjadwal atau menambah sesi baru.</div>
         <button onClick={() => setRoomEditMode((value) => !value)} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 font-black ${roomEditMode ? "bg-indigo-700 text-white" : "border border-indigo-300 bg-white text-indigo-700"}`}><Pencil className="h-4 w-4" />{roomEditMode ? "✓ Mode edit aktif" : "Edit Ruangan Minggu Ini"}</button>
       </div>}
 
@@ -556,12 +559,12 @@ export function JadwalRuangan({
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 text-xs uppercase font-extrabold tracking-wider">
                 <th className="p-3 w-32 min-w-[128px] max-w-[128px] border-r border-slate-200 text-center bg-slate-100/70">
-                  Jam Ke (JP)
+                  <T>{"Jam Ke (JP)"}</T>
                 </th>
                 {weekDays.map(d => (
                   <th key={d.dateStr} className="p-3 border-r border-slate-200 last:border-r-0 w-[170px] min-w-[170px] max-w-[170px]">
                     <div className="flex flex-col text-center">
-                      <span className="text-sm font-extrabold text-slate-900">{d.name}</span>
+                      <span className="text-sm font-extrabold text-slate-900">{t(d.name)}</span>
                       <span className="text-[11px] font-medium text-slate-500 lowercase">
                         {d.displayDate}
                       </span>
@@ -964,12 +967,12 @@ export function JadwalRuangan({
                         {/* Details */}
                         <div className="grid grid-cols-2 gap-3 text-xs">
                           <div>
-                            <span className="text-[10px] font-bold text-slate-500 uppercase block">Mata Pelajaran</span>
+                            <span className="text-[10px] font-bold text-slate-500 uppercase block"><T>{"Mata Pelajaran"}</T></span>
                             <span className="font-extrabold text-slate-800 text-xs sm:text-sm">{u.mapel || "-"}</span>
                             {u.mulai && u.selesai && <span className="block text-xs text-indigo-700 font-bold">Pukul {u.mulai}–{u.selesai}</span>}
                           </div>
                           <div>
-                            <span className="text-[10px] font-bold text-slate-500 uppercase block">Guru Pengajar</span>
+                            <span className="text-[10px] font-bold text-slate-500 uppercase block"><T>{"Guru Pengajar"}</T></span>
                             <span className="font-bold text-slate-800 text-xs sm:text-sm">{u.guru || "-"}</span>
                           </div>
                         </div>
