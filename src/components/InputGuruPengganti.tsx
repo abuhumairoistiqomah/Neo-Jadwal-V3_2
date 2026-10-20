@@ -32,6 +32,8 @@ import { buildApprovedLeaveOperatorRows } from "../domain/inval/approvedLeaveSel
 import type { WaitingBadalSession } from "../domain/leaveApproval";
 
 import { T } from '../i18n/LanguageProvider';
+import { TeacherDutyV319Repository } from '../infrastructure/repositories/teacherDutyV319Repository';
+import { resolveTeacherDutyBlock, type TeacherDutySnapshot } from '../domain/dutyResolutionV319';
 
 
 interface InputGuruPenggantiProps {
@@ -481,6 +483,22 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
     const today = new Date();
     return today.toISOString().split("T")[0];
   });
+  // RC3: date-keyed authoritative RC2 duty read. Fail closed while loading or on read errors.
+  const dutyRepository = useMemo(() => new TeacherDutyV319Repository(), []);
+  const [dutyState, setDutyState] = useState<{
+    date:string;snapshot:TeacherDutySnapshot|null;error:string;
+  }>({date:'',snapshot:null,error:''});
+  React.useEffect(() => {
+    if(readOnlyPreview) return;
+    let cancelled=false;
+    dutyRepository.listForDate(tanggal).then(snapshot=>{
+      if(!cancelled)setDutyState({date:tanggal,snapshot,error:''});
+    }).catch((error:unknown)=>{
+      if(!cancelled)setDutyState({date:tanggal,snapshot:null,error:error instanceof Error?error.message:'Gagal membaca penugasan kegiatan.'});
+    });
+    return ()=>{cancelled=true;};
+  },[tanggal,dutyRepository,readOnlyPreview]);
+  const dutyReady = readOnlyPreview || (dutyState.date===tanggal && dutyState.snapshot!==null);
   const [guruIzin, setGuruIzin] = useState<string>("");
   const [searchTeacherQuery, setSearchTeacherQuery] = useState<string>("");
   const [showTeacherSuggestions, setShowTeacherSuggestions] = useState<boolean>(false);
@@ -1137,6 +1155,18 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
       const constraintReasons = policy.constraintReasons;
       const constraintIds = policy.constraintIds;
 
+      const dutyBlock = candidate.id && dutyState.date===tanggal && dutyState.snapshot
+        ? resolveTeacherDutyBlock(dutyState.snapshot,candidate.id,tanggal) : null;
+      if (!dutyReady || dutyBlock) {
+        const dutyReason=dutyBlock?.reason || (dutyState.error || 'Memuat penugasan kegiatan RC3. Tunggu verifikasi.');
+        return {
+          teacher:candidate,eligible:false,isAbsentAtPeriod,isPendamping:false,isPendampingOnDay,
+          jpCount:totalJpCount,mengajarJp,pendampingJp,dailyLoad:dailyLoadObj,weeklyLoad:weeklyLoadObj,
+          score:-9999,reasons:[dutyReason],genderPreference,
+          constraintStatus:'HARD_BLOCKED' as const,constraintReasons:[dutyReason],constraintIds:[],requiresConstraintOverride:false,
+        };
+      }
+
       if (constraintAvailability.status === "HARD_BLOCKED") {
         return {
           teacher: candidate, eligible: false, isAbsentAtPeriod, isPendamping: false, isPendampingOnDay,
@@ -1272,6 +1302,8 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
     teacherDailyLoads,
     teacherWeeklyLoads,
     substituteConstraints,
+    dutyState,
+    dutyReady,
   ]);
 
   // Compute schedule breakdown and availability status for the verification modal
@@ -1492,6 +1524,18 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
   // Submit and save replacement logs
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if(!readOnlyPreview && !dutyReady){
+      setErrorMessage(dutyState.error || 'Belum selesai memverifikasi penugasan kegiatan RC3. Coba lagi.');
+      return;
+    }
+    const dutyConflict=generatedRows.find(row=>{
+      const selected=teachers.find(t=>normalizeTeacherKey(t.nama)===normalizeTeacherKey(row.selectedPengganti));
+      return selected?.id && dutyState.snapshot && resolveTeacherDutyBlock(dutyState.snapshot,selected.id,tanggal);
+    });
+    if(dutyConflict){
+      setErrorMessage(`Guru pengganti JP${dutyConflict.jam_ke} sedang bertugas atau libur pengganti. Pilih kandidat lain.`);
+      return;
+    }
     if (!approvedPeriodsReady) {
       setErrorMessage(approvedPeriodQuery?.error || 'Sedang memuat status izin APPROVED. Tunggu hingga verifikasi selesai.');
       return;
@@ -1672,6 +1716,9 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
           <strong>Badal Pengajuan Izin {approvedWaitingSession.requestCode}.</strong> Guru, tanggal, JP, dan kelas dikunci sesuai Waiting List. Rekomendasi gender, jadwal harian, dan beban mingguan tetap aktif. Tugas guru izin hanya dapat dilihat, tidak diubah.
         </div>}
         {/* Step 1: Input Permohonan Form */}
+        {!readOnlyPreview && !dutyReady && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
+          {dutyState.error ? `Tidak dapat membaca penugasan kegiatan: ${dutyState.error}. Rekomendasi badal diblokir untuk keamanan.` : 'Memverifikasi penugasan kegiatan dan libur pengganti…'}
+        </div>}
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             

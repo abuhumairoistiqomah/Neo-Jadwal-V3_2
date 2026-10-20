@@ -38,6 +38,13 @@ export interface ManagementTeacherAnalyticsRow {
   taskEligiblePeriods: number;
   taskReadyPeriods: number;
   taskReadinessPct: number;
+  /** V3.18 — one teacher/date/JP counts once, JP1–6 only. */
+  effectiveTeachingJp?: number;
+  totalLeaveJp?: number;
+  effectiveTeachingDays?: number;
+  totalLeaveDays?: number;
+  teachingSharePct?: number | null;
+  leaveSharePct?: number | null;
 }
 
 export interface ManagementDailyAnalyticsRow {
@@ -159,35 +166,104 @@ export function getCoverageHealthLabel(rate: number): "BAIK" | "PERLU PERHATIAN"
   return "KRITIS";
 }
 
+/**
+ * Merge staff-only effective activity RPC into the existing management report.
+ * Do not fake zero values if the V3.18 migration hasn't been applied yet.
+ * Percentages describe the distribution of recorded instructional JP vs leave JP,
+ * not time-clock verified attendance or schoolwide expected JP.
+ */
+export function mergeTeacherEffectiveActivity(
+  base: ManagementAnalyticsPayload,
+  raw: unknown,
+): ManagementAnalyticsPayload {
+  if (!Array.isArray(raw)) throw new Error('ANALYTICS_V318_INVALID_ACTIVITY_PAYLOAD');
+  const lookup = new Map<string, {
+    effectiveTeachingJp: number;
+    totalLeaveJp: number;
+    effectiveTeachingDays: number;
+    totalLeaveDays: number;
+  }>();
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object' || !('teacher_id' in entry)) {
+      throw new Error('ANALYTICS_V318_INVALID_ACTIVITY_ROW');
+    }
+    const row = entry as Record<string, unknown>;
+    const id = String(row.teacher_id || '');
+    if (!id || lookup.has(id) || !['effective_teaching_jp','leave_jp','effective_teaching_days','leave_days']
+      .every((field) => Number.isInteger(Number(row[field])) && Number(row[field]) >= 0 && row[field] !== null && row[field] !== undefined)) {
+      throw new Error('ANALYTICS_V318_INVALID_ACTIVITY_ROW');
+    }
+    lookup.set(id, {
+      effectiveTeachingJp: Number(row.effective_teaching_jp),
+      totalLeaveJp: Number(row.leave_jp),
+      effectiveTeachingDays: Number(row.effective_teaching_days),
+      totalLeaveDays: Number(row.leave_days),
+    });
+  }
+  return {
+    ...base,
+    teachers: base.teachers.map((teacher) => {
+      const activity = lookup.get(teacher.teacherId);
+      if (!activity) throw new Error(`ANALYTICS_V318_TEACHER_NOT_FOUND: ${teacher.teacherId}`);
+      const denominator = activity.effectiveTeachingJp + activity.totalLeaveJp;
+      return {
+        ...teacher,
+        ...activity,
+        teachingSharePct: denominator ? 100 * activity.effectiveTeachingJp / denominator : null,
+        leaveSharePct: denominator ? 100 * activity.totalLeaveJp / denominator : null,
+      };
+    }),
+  };
+}
+
+export const teacherActivitySortKeys = [
+  'name', 'effectiveTeachingJp', 'totalLeaveJp', 'effectiveTeachingDays',
+  'totalLeaveDays', 'teachingSharePct', 'leaveSharePct',
+] as const;
+export type TeacherActivitySortKey = typeof teacherActivitySortKeys[number];
+export type TeacherActivitySortDirection = 'asc' | 'desc';
+
+export function sortTeacherActivityRows(
+  rows: ManagementTeacherAnalyticsRow[],
+  key: TeacherActivitySortKey,
+  direction: TeacherActivitySortDirection,
+): ManagementTeacherAnalyticsRow[] {
+  return [...rows].sort((a, b) => {
+    if (key !== 'name') {
+      const left = a[key], right = b[key];
+      if (left == null && right != null) return 1;
+      if (right == null && left != null) return -1;
+      if (left != null && right != null && left !== right) {
+        return (Number(left) - Number(right)) * (direction === 'asc' ? 1 : -1);
+      }
+    } else {
+      const byName = a.teacherName.localeCompare(b.teacherName, 'id-ID', { sensitivity: 'base' });
+      if (byName) return direction === 'asc' ? byName : -byName;
+    }
+    return a.teacherName.localeCompare(b.teacherName, 'id-ID', { sensitivity: 'base' });
+  });
+}
+
 export function buildTeacherAnalyticsCsv(rows: ManagementTeacherAnalyticsRow[]): string {
   const headers = [
-    "Guru",
-    "Gender",
-    "JP Reguler/Minggu",
-    "Hari Ketidakhadiran",
-    "JP Izin Total",
-    "JP Izin Mengajar",
-    "JP Izin Free",
-    "JP0 Homeroom",
-    "JP Menjadi Badal",
-    "JP Wajib Tugas",
-    "JP Tugas Siap",
-    "Kesiapan Tugas (%)",
+    'Guru',
+    'Total JP Mengajar Efektif',
+    'Total JP Izin',
+    'Total Hari Mengajar Efektif',
+    'Total Hari Izin',
+    'Persentase JP Mengajar',
+    'Persentase JP Izin',
   ];
-  const escape = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const escape = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  const pct = (value: number | null | undefined) => value == null ? '—' : `${value.toFixed(1)}%`;
   const lines = rows.map((row) => [
     row.teacherName,
-    row.gender,
-    row.regularWeeklyJp,
-    row.leaveDays,
-    row.absencePeriods,
-    row.teachingAbsencePeriods,
-    row.freeAbsencePeriods,
-    row.homeroomAbsencePeriods,
-    row.substitutePeriods,
-    row.taskEligiblePeriods,
-    row.taskReadyPeriods,
-    row.taskReadinessPct.toFixed(1),
-  ].map(escape).join(","));
-  return [headers.map(escape).join(","), ...lines].join("\n");
+    row.effectiveTeachingJp ?? '—',
+    row.totalLeaveJp ?? '—',
+    row.effectiveTeachingDays ?? '—',
+    row.totalLeaveDays ?? '—',
+    pct(row.teachingSharePct),
+    pct(row.leaveSharePct),
+  ].map(escape).join(','));
+  return [headers.map(escape).join(','), ...lines].join('\n');
 }

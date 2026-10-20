@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -15,16 +15,23 @@ import {
   TrendingUp,
   UserCheck,
   Users,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
 } from "lucide-react";
 import {
   buildTeacherAnalyticsCsv,
   getCoverageHealthLabel,
   type ManagementAnalyticsPayload,
   type ManagementTeacherAnalyticsRow,
+  sortTeacherActivityRows,
+  type TeacherActivitySortKey,
+  type TeacherActivitySortDirection,
 } from "../domain/managementAnalytics";
 import { getSchoolTodayISO } from "../domain/date";
 import { ManagementAnalyticsRepository } from "../infrastructure/repositories/managementAnalyticsRepository";
 import { getErrorMessage } from "../domain/errorMessage";
+import { getHorizontalScrollMetrics, getDraggedScrollLeft, syncHorizontalScroll } from "../domain/tableNavigation";
 
 import { T } from '../i18n/LanguageProvider';
 interface ManagementAnalyticsProps {
@@ -32,7 +39,6 @@ interface ManagementAnalyticsProps {
 }
 
 type Preset = "month" | "30d" | "90d" | "custom";
-type TeacherSort = "name" | "regular" | "leave" | "substitute" | "task";
 
 function formatDate(value: string): string {
   const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -89,7 +95,51 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-  const [teacherSort, setTeacherSort] = useState<TeacherSort>("substitute");
+  const [teacherSort, setTeacherSort] = useState<TeacherActivitySortKey>('leaveSharePct');
+  const [sortDirection, setSortDirection] = useState<TeacherActivitySortDirection>('desc');
+  // RC2: two scrollbars share the same scrollLeft; scroll events never update React state.
+  const topTableScrollRef = useRef<HTMLDivElement>(null);
+  const bodyTableScrollRef = useRef<HTMLDivElement>(null);
+  const teacherTableRef = useRef<HTMLTableElement>(null);
+  const [tableGeometry, setTableGeometry] = useState({ viewportWidth: 0, contentWidth: 0, hasOverflow: false });
+  const dragRef = useRef<{ pointerId: number; startX: number; startScrollLeft: number; moved: boolean } | null>(null);
+
+  const onTopTableScroll = () => syncHorizontalScroll(topTableScrollRef.current, bodyTableScrollRef.current);
+  const onBodyTableScroll = () => syncHorizontalScroll(bodyTableScrollRef.current, topTableScrollRef.current);
+
+  const onTablePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    // Native touch and pen scrolling remains untouched; header buttons stay clickable.
+    if (event.pointerType !== 'mouse' || event.button !== 0) return;
+    const viewport = bodyTableScrollRef.current;
+    if (!viewport || viewport.scrollWidth <= viewport.clientWidth + 1) return;
+    if (event.target instanceof Element && event.target.closest('thead,button,a,input,select,textarea,[role="button"],[data-no-table-drag]')) return;
+    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startScrollLeft: viewport.scrollLeft, moved: false };
+    viewport.setPointerCapture(event.pointerId);
+  };
+  const onTablePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!drag.moved && Math.abs(event.clientX - drag.startX) < 6) return; // preserve ordinary clicks
+    drag.moved = true;
+    const viewport = bodyTableScrollRef.current;
+    if (!viewport) return;
+    viewport.style.cursor = 'grabbing';
+    viewport.style.userSelect = 'none';
+    viewport.scrollLeft = getDraggedScrollLeft(drag.startScrollLeft, drag.startX, event.clientX);
+    event.preventDefault();
+  };
+  const finishTableDrag = () => {
+    dragRef.current = null;
+    const viewport = bodyTableScrollRef.current;
+    if (!viewport) return;
+    viewport.style.removeProperty('cursor');
+    viewport.style.removeProperty('user-select');
+  };
+
+  const chooseSort = (key: TeacherActivitySortKey) => {
+    if (key === teacherSort) setSortDirection((direction) => direction === 'asc' ? 'desc' : 'asc');
+    else { setTeacherSort(key); setSortDirection(key === 'name' ? 'asc' : 'desc'); }
+  };
 
   const applyPreset = (value: Exclude<Preset, "custom">) => {
     setPreset(value);
@@ -111,6 +161,7 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
       const next = await new ManagementAnalyticsRepository().load(startDate, endDate);
       setData(next);
     } catch (err) {
+      setData(null); // Never display stale/partial statistics after an RPC failure.
       setError(getErrorMessage(err, "Analytics gagal dimuat."));
     } finally {
       setLoading(false);
@@ -126,15 +177,42 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
   const teacherRows = useMemo(() => {
     if (!data) return [];
     const query = search.trim().toLocaleLowerCase("id-ID");
-    const rows = data.teachers.filter((row) => !query || row.teacherName.toLocaleLowerCase("id-ID").includes(query));
-    return [...rows].sort((a, b) => {
-      if (teacherSort === "name") return a.teacherName.localeCompare(b.teacherName, "id-ID");
-      if (teacherSort === "regular") return b.regularWeeklyJp - a.regularWeeklyJp || a.teacherName.localeCompare(b.teacherName, "id-ID");
-      if (teacherSort === "leave") return b.teachingAbsencePeriods - a.teachingAbsencePeriods || b.freeAbsencePeriods - a.freeAbsencePeriods;
-      if (teacherSort === "task") return a.taskReadinessPct - b.taskReadinessPct || b.taskEligiblePeriods - a.taskEligiblePeriods;
-      return b.substitutePeriods - a.substitutePeriods || a.teacherName.localeCompare(b.teacherName, "id-ID");
-    });
-  }, [data, search, teacherSort]);
+    const filtered = data.teachers.filter((row) => !query || row.teacherName.toLocaleLowerCase("id-ID").includes(query));
+    return sortTeacherActivityRows(filtered, teacherSort, sortDirection);
+  }, [data, search, teacherSort, sortDirection]);
+
+  // Only geometry changes trigger a render. ResizeObserver also catches font/layout changes.
+  // Hook runs again when the report first mounts after its asynchronous load.
+  useLayoutEffect(() => {
+    const viewport = bodyTableScrollRef.current;
+    const table = teacherTableRef.current;
+    if (!viewport || !table) return;
+    const measure = () => {
+      const next = getHorizontalScrollMetrics(viewport.clientWidth, viewport.scrollWidth);
+      setTableGeometry((prev) => prev.viewportWidth === next.viewportWidth &&
+        prev.contentWidth === next.contentWidth && prev.hasOverflow === next.hasOverflow ? prev : next);
+      syncHorizontalScroll(viewport, topTableScrollRef.current);
+    };
+    measure();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    observer?.observe(viewport);
+    observer?.observe(table);
+    window.addEventListener('resize', measure);
+    return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
+  }, [data, teacherRows.length]);
+
+  const sortableHeading = (label: string, field: TeacherActivitySortKey, title: string) => (
+    <th scope="col" aria-sort={teacherSort === field ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+      className="min-w-[145px] px-3 py-3 text-center">
+      <button type="button" title={title} onClick={() => chooseSort(field)}
+        className="inline-flex items-center gap-1 rounded-md px-1 py-1 text-center hover:bg-indigo-50 hover:text-indigo-700 focus-visible:outline-2 focus-visible:outline-indigo-600">
+        <span>{label}</span>
+        {teacherSort !== field ? <ArrowUpDown className="h-3.5 w-3.5 shrink-0" />
+          : sortDirection === 'asc' ? <ArrowUp className="h-3.5 w-3.5 shrink-0" />
+          : <ArrowDown className="h-3.5 w-3.5 shrink-0" />}
+      </button>
+    </th>
+  );
 
   const maxDaily = useMemo(() => {
     if (!data?.daily.length) return 1;
@@ -334,54 +412,65 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
               <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="font-black text-slate-900">Beban Operasional Guru</h2>
-                  <p className="text-xs text-slate-500">Beban reguler mingguan + ketidakhadiran + kontribusi sebagai badal.</p>
+                  <p className="text-xs text-slate-500">Akumulasi guru per rentang analisis. Klik judul kolom untuk mengurutkan (↑/↓).</p>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <div className="relative">
                     <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                     <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari guru…" className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm sm:w-48" />
                   </div>
-                  <select value={teacherSort} onChange={(e) => setTeacherSort(e.target.value as TeacherSort)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-600">
-                    <option value="substitute">Badal terbanyak</option>
-                    <option value="leave">Izin mengajar terbanyak</option>
-                    <option value="regular">JP reguler terbanyak</option>
-                    <option value="task">Tugas paling perlu perhatian</option>
-                    <option value="name">Nama A–Z</option>
-                  </select>
+
                 </div>
               </div>
-              <div className="overflow-x-auto rounded-xl border border-slate-200">
-                <table className="min-w-[860px] w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+              <div className="overflow-hidden rounded-xl border border-slate-200" data-testid="teacher-activity-table-frame">
+                {/* RC2: native horizontal scrollbar above the frozen header. Width matches the
+                    table viewport (minus its vertical scrollbar) so both ends align exactly. */}
+                {tableGeometry.hasOverflow && (
+                  <div className="border-b border-slate-200 bg-slate-50 pt-1">
+                    <div className="mb-0.5 px-2 text-[10px] font-medium text-slate-500" aria-hidden="true">↔ Geser kolom dengan scrollbar ini atau drag isi tabel</div>
+                    <div ref={topTableScrollRef} role="region" aria-label="Geser kolom tabel ke kanan atau kiri" tabIndex={0}
+                      onScroll={onTopTableScroll} className="overflow-x-auto overflow-y-hidden"
+                      style={{ width: tableGeometry.viewportWidth || '100%', maxWidth: '100%', height: 17 }}>
+                      <div aria-hidden="true" style={{ width: tableGeometry.contentWidth, height: 1 }} />
+                    </div>
+                  </div>
+                )}
+                <div ref={bodyTableScrollRef} role="region" aria-label="Beban Operasional Guru — tabel dapat digulir" tabIndex={0}
+                  className="relative max-h-[min(58vh,520px)] overflow-auto overscroll-contain"
+                  onScroll={onBodyTableScroll} onPointerDown={onTablePointerDown} onPointerMove={onTablePointerMove}
+                  onPointerUp={finishTableDrag} onPointerCancel={finishTableDrag} onLostPointerCapture={finishTableDrag}>
+                <table ref={teacherTableRef} className="min-w-[1120px] w-full text-left text-xs">
+                  <thead className="sticky top-0 z-30 bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500 shadow-sm">
                     <tr>
-                      <th className="px-3 py-3">Guru</th>
-                      <th className="px-3 py-3 text-center">JP Reguler</th>
-                      <th className="px-3 py-3 text-center">Hari Izin</th>
-                      <th className="px-3 py-3 text-center">JP Mengajar</th>
-                      <th className="px-3 py-3 text-center">JP Free</th>
-                      <th className="px-3 py-3 text-center">JP0</th>
-                      <th className="px-3 py-3 text-center">Menjadi Badal</th>
-                      <th className="px-3 py-3 text-center">Tugas</th>
+                      <th scope="col" aria-sort={teacherSort === 'name' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'} className="sticky left-0 z-40 min-w-[205px] bg-slate-50 px-3 py-3 text-left shadow-[3px_0_7px_-5px_rgba(15,23,42,0.35)]">
+                        <button type="button" onClick={() => chooseSort('name')} className="inline-flex items-center gap-1 rounded px-1 py-1 hover:text-indigo-700">
+                          Guru {teacherSort !== 'name' ? <ArrowUpDown className="h-3.5 w-3.5"/> : sortDirection === 'asc' ? <ArrowUp className="h-3.5 w-3.5"/> : <ArrowDown className="h-3.5 w-3.5"/>}
+                        </button>
+                      </th>
+                      {sortableHeading('Total JP Mengajar Efektif','effectiveTeachingJp','JP1–6 dari jadwal efektif, termasuk badal mengajar; satu guru/tanggal/JP dihitung sekali.')}
+                      {sortableHeading('Total JP Izin','totalLeaveJp','JP1–6 izin mengajar APPROVED dan izin legacy; FREE, JP0, tugas resmi non-mengajar tidak dihitung.')}
+                      {sortableHeading('Total Hari Mengajar Efektif','effectiveTeachingDays','Jumlah tanggal unik dengan minimal satu JP mengajar efektif.')}
+                      {sortableHeading('Total Hari Izin','totalLeaveDays','Jumlah tanggal unik dengan izin tercatat, termasuk hari izin yang hanya memiliki JP FREE.')}
+                      {sortableHeading('Persentase JP Mengajar','teachingSharePct','JP mengajar efektif ÷ (JP mengajar efektif + JP izin) × 100%.')}
+                      {sortableHeading('Persentase JP Izin','leaveSharePct','JP izin ÷ (JP mengajar efektif + JP izin) × 100%.')}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white">
                     {teacherRows.map((row: ManagementTeacherAnalyticsRow) => (
-                      <tr key={row.teacherId} className="hover:bg-slate-50/70">
-                        <td className="px-3 py-3"><div className="font-black text-slate-800">{row.teacherName}</div><div className="text-[10px] font-bold text-slate-400">{row.gender}</div></td>
-                        <td className="px-3 py-3 text-center font-bold text-slate-700">{row.regularWeeklyJp}</td>
-                        <td className="px-3 py-3 text-center">{row.leaveDays}</td>
-                        <td className="px-3 py-3 text-center font-bold text-violet-700">{row.teachingAbsencePeriods}</td>
-                        <td className="px-3 py-3 text-center text-sky-700">{row.freeAbsencePeriods}</td>
-                        <td className="px-3 py-3 text-center">{row.homeroomAbsencePeriods}</td>
-                        <td className="px-3 py-3 text-center font-black text-emerald-700">{row.substitutePeriods}</td>
-                        <td className="px-3 py-3 text-center">
-                          {row.taskEligiblePeriods > 0 ? <span className={`rounded-full px-2 py-1 text-[10px] font-black ${row.taskReadinessPct >= 95 ? "bg-emerald-50 text-emerald-700" : row.taskReadinessPct >= 80 ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"}`}>{row.taskReadyPeriods}/{row.taskEligiblePeriods} ({row.taskReadinessPct.toFixed(0)}%)</span> : <span className="text-slate-300">—</span>}
-                        </td>
+                      <tr key={row.teacherId} className="group hover:bg-slate-50/70">
+                        <td className="sticky left-0 z-10 min-w-[205px] bg-white px-3 py-3 shadow-[3px_0_7px_-5px_rgba(15,23,42,0.35)] group-hover:bg-slate-50"><div className="font-black text-slate-800">{row.teacherName}</div></td>
+                        <td className="px-3 py-3 text-center font-bold text-emerald-700">{row.effectiveTeachingJp ?? '—'}</td>
+                        <td className="px-3 py-3 text-center font-bold text-rose-700">{row.totalLeaveJp ?? '—'}</td>
+                        <td className="px-3 py-3 text-center font-medium">{row.effectiveTeachingDays ?? '—'}</td>
+                        <td className="px-3 py-3 text-center font-medium">{row.totalLeaveDays ?? '—'}</td>
+                        <td className="px-3 py-3 text-center font-black text-emerald-700">{row.teachingSharePct == null ? '—' : `${row.teachingSharePct.toFixed(1)}%`}</td>
+                        <td className="px-3 py-3 text-center font-black text-rose-700">{row.leaveSharePct == null ? '—' : `${row.leaveSharePct.toFixed(1)}%`}</td>
                       </tr>
                     ))}
-                    {teacherRows.length === 0 && <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400">Tidak ada guru yang cocok dengan pencarian.</td></tr>}
+                    {teacherRows.length === 0 && <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">Tidak ada guru yang cocok dengan pencarian.</td></tr>}
                   </tbody>
                 </table>
+                </div>
               </div>
             </section>
 
@@ -402,7 +491,7 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
           </div>
 
           <section className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 text-xs leading-relaxed text-indigo-900">
-            <strong>Definisi angka:</strong> FREE tetap dihitung sebagai ketidakhadiran tetapi tidak masuk denominator coverage. JP-0 Homeroom masuk coverage namun tidak wajib tugas. Badal kelas gabung dideduplikasi per guru izin + tanggal + JP. Request yang ditolak/dibatalkan hanya muncul di status pengajuan dan tidak dihitung sebagai fakta ketidakhadiran.
+            <strong>Definisi angka:</strong> Tabel Beban Operasional Guru menghitung JP1–6 dari jadwal efektif dan badal mengajar, lalu mengecualikan izin serta tugas non-mengajar yang tercatat. Kelas gabung dihitung satu JP per guru/tanggal/JP. JP izin hanya periode TEACHING APPROVED/legacy, sedangkan hari izin dapat mencakup FREE. Persentase = bagian dari (JP Mengajar Efektif + JP Izin), bukan persentase kehadiran absensi biometrik. Angka bergantung pada akurasi penugasan yang tercatat. Jika penyebut nol ditampilkan —. FREE tetap dihitung sebagai ketidakhadiran tetapi tidak masuk denominator coverage. JP-0 Homeroom masuk coverage namun tidak wajib tugas. Badal kelas gabung dideduplikasi per guru izin + tanggal + JP. Request yang ditolak/dibatalkan hanya muncul di status pengajuan dan tidak dihitung sebagai fakta ketidakhadiran.
           </section>
         </>
       ) : null}

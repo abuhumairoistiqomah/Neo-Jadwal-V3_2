@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { DashboardTeacherSearch } from "./ui/DashboardTeacherSearch";
 import { isGrade1Or2 } from "../domain/class";
 import { 
   Teacher, ScheduleItem, LogIzinItem, ActivePage, JadwalInsidentalItem, MasterRuanganItem, KalenderAkademikItem,
@@ -56,8 +57,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
   setPage,
 }) => {
   const {t, language}=useLanguage();
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedDay, setSelectedDay] = useState<"Senin" | "Selasa" | "Rabu" | "Kamis" | "Jumat">("Senin");
   const [dashboardType, setDashboardType] = useState<"guru" | "wali-kelas">("guru");
   const [showNotifications, setShowNotifications] = useState<boolean>(true);
@@ -73,7 +72,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
     tugas: string;
   } | null>(null);
 
-  const suggestionsRef = useRef<HTMLDivElement>(null);
 
   // Compute all unique classes from schedules
   const classesList = useMemo(() => {
@@ -143,43 +141,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
     
     setSelectedDate(`${year}-${month}-${dVal}`);
     setSelectedDay(dayName);
-  };
-
-  // Sync searchQuery with selectedTeacher on load
-  useEffect(() => {
-    setSearchQuery(selectedTeacher);
-  }, [selectedTeacher]);
-
-  // Click outside listener for suggestions dropdown
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (suggestionsRef.current && !suggestionsRef.current.contains(event.target as Node)) {
-        setShowSuggestions(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
-
-  // Filter teachers for autocomplete
-  const filteredTeachers = searchQuery.trim() === ""
-    ? []
-    : teachers.filter(t => 
-        t.nama.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        t.mapel_utama.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-
-  const handleSelectTeacher = (teacherName: string) => {
-    setSelectedTeacher(teacherName);
-    setSearchQuery(teacherName);
-    setShowSuggestions(false);
-  };
-
-  const clearSelection = () => {
-    setSelectedTeacher("");
-    setSearchQuery("");
   };
 
   // Find current teacher details
@@ -994,62 +955,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
               Masukkan nama guru untuk menampilkan jadwal mengajar hari ini, jadwal lengkap mingguan, jam kosong, dan list mata pelajaran.
             </p>
             
-            <div className="relative" ref={suggestionsRef}>
-              <div className="relative">
-                <input
-                  id="teacher-search-input"
-                  type="text"
-                  className="w-full pl-11 pr-10 py-3.5 bg-slate-50 hover:bg-slate-100/75 focus:bg-white text-slate-800 border border-slate-200 focus:border-blue-500 rounded-xl outline-none transition-all font-medium text-base shadow-sm"
-                  placeholder="Cari Nama Guru atau Mata Pelajaran..."
-                  value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    setShowSuggestions(true);
-                  }}
-                  onFocus={() => setShowSuggestions(true)}
-                />
-                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-                  <Search className="w-5 h-5" />
-                </div>
-                {selectedTeacher && (
-                  <button
-                    id="clear-search-btn"
-                    onClick={clearSelection}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-colors"
-                    title="Hapus pilihan"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-
-              {/* Autocomplete Suggestions */}
-              {showSuggestions && filteredTeachers.length > 0 && (
-                <div className="absolute z-30 left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-xl max-h-64 overflow-y-auto divide-y divide-slate-100">
-                  {filteredTeachers.map((teacher) => (
-                    <button
-                      key={teacher.nama}
-                      id={`suggest-${teacher.nama.replace(/\s+/g, '-').toLowerCase()}`}
-                      onClick={() => handleSelectTeacher(teacher.nama)}
-                      className="w-full text-left px-5 py-3 hover:bg-blue-50/50 flex flex-col transition-colors group"
-                    >
-                      <span className="font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">
-                        {teacher.nama}
-                      </span>
-                      <span className="text-xs text-slate-400 mt-0.5">
-                        Mapel Utama: {teacher.mapel_utama} | Rumpun: {teacher.rumpun} | {teacher.jenjang}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {showSuggestions && searchQuery.trim() !== "" && filteredTeachers.length === 0 && (
-                <div className="absolute z-30 left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-xl p-5 text-center text-slate-500 text-sm">
-                  Tidak menemukan guru dengan kata kunci "{searchQuery}"
-                </div>
-              )}
-            </div>
+            <DashboardTeacherSearch
+              teachers={teachers}
+              selectedTeacher={selectedTeacher}
+              onSelectTeacher={setSelectedTeacher}
+            />
 
             {/* Selected Teacher Status Card */}
             {currentTeacherObj && (

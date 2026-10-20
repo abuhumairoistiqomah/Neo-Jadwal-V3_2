@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { TeacherHeaderSearch } from "./components/ui/TeacherHeaderSearch";
+import { AdminLoginModal } from "./components/ui/AdminLoginModal";
 import { 
   Teacher, ScheduleItem, LogIzinItem, ActivePage, JadwalInsidentalItem, MasterRuanganItem, KalenderAkademikItem 
 } from "./types";
@@ -26,6 +27,7 @@ import { SyaikhScheduleMassImporter } from "./components/SyaikhScheduleMassImpor
 import { ScheduleQuickEditor } from "./components/ScheduleQuickEditor";
 import { SubstituteConstraintAdmin } from "./components/SubstituteConstraintAdmin";
 import { AcademicCalendarAdmin } from "./components/AcademicCalendarAdmin";
+import { OperationalCalendarV319Admin } from "./components/OperationalCalendarV319Admin";
 import { EducationCalendar } from "./components/EducationCalendar";
 import { EducationCalendarAdmin } from "./components/EducationCalendarAdmin";
 import { IncidentalScheduleAdmin } from "./components/IncidentalScheduleAdmin";
@@ -34,11 +36,11 @@ import { OperationalActionCenter } from "./components/OperationalActionCenter";
 import { ManagementAnalytics } from "./components/ManagementAnalytics";
 import { TeacherIndividualStatistics } from "./components/TeacherIndividualStatistics";
 import { 
-  ShieldAlert, ShieldCheck, Database, LogIn, LogOut, 
+  ShieldAlert, ShieldCheck, Database, LogOut, 
   HelpCircle, Wifi, WifiOff, RefreshCw, Layers,
   Menu, X, Home, Calendar, BookOpen, Clock, Users, UserPlus, 
   History, BarChart2, BarChart3, Upload, ClipboardList, Table, GraduationCap, Building2,
-  ChevronLeft, ChevronRight, PanelLeft, PanelLeftClose, PanelLeftOpen, ClipboardCheck, FileUp, Ban, CalendarDays, CalendarPlus2, GitBranch, BellRing
+  ChevronLeft, ChevronRight, PanelLeft, PanelLeftClose, PanelLeftOpen, ClipboardCheck, FileUp, Ban, CalendarDays, CalendarPlus2, GitBranch, BellRing, CalendarRange
 } from "lucide-react";
 import { AdminAccount } from "./types";
 import { isSupabaseConfigured } from "./infrastructure/supabase/client";
@@ -113,10 +115,6 @@ export default function App() {
     return stored ? JSON.parse(stored) : null;
   });
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
-  const [loginId, setLoginId] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
-  const [adminAuthLoading, setAdminAuthLoading] = useState(false);
 
   // Sidebar & Global Header Search States
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
@@ -390,6 +388,7 @@ export default function App() {
     { id: "schedule-incidental", label: "Jadwal Insidental", icon: CalendarPlus2, adminOnly: true, section: "Kelola Jadwal & Kalender" },
     { id: "substitute-constraints", label: "Aturan Guru Badal", icon: Ban, adminOnly: true },
     { id: "academic-calendar", label: "Kalender Akademik", icon: CalendarDays, adminOnly: true },
+    { id: "operational-calendar", label: "Kalender Operasional KBM", icon: CalendarRange, adminOnly: true },
     { id: "education-calendar-admin", label: "Input Kalender Pendidikan", icon: CalendarPlus2, adminOnly: true },
     { id: "schedule-control-center", label: "Versi & Konflik Jadwal", icon: GitBranch, adminOnly: true },
 
@@ -1061,6 +1060,17 @@ export default function App() {
               )
             )}
 
+            {activePage === "operational-calendar" && (
+              isAdmin ? (
+                <OperationalCalendarV319Admin
+                  onChanged={async () => { await refreshFromSupabase(); }}
+                  onBack={() => setActivePage("dashboard")}
+                />
+              ) : (
+                <AdminOnlyFallback onBack={() => setActivePage("dashboard")} />
+              )
+            )}
+
             {activePage === "academic-calendar" && (
               isAdmin ? (
                 <AcademicCalendarAdmin
@@ -1075,6 +1085,9 @@ export default function App() {
             {activePage === "schedule-control-center" && (
               isAdmin ? (
                 <ScheduleControlCenter
+                  teachers={teachers}
+                  logs={logs}
+                  schoolToday={schoolToday}
                   schedules={schedules}
                   incidentals={jadwalInsidental}
                   kalenderAkademik={kalenderAkademik}
@@ -1162,111 +1175,28 @@ export default function App() {
         />
       )}
 
-      {/* Admin Login Modal */}
+      {/* Inputs stay inside their own component: typing must not rerender App's schedule tree. */}
       {showLoginModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl max-w-sm w-full border border-slate-200 p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-              <h3 className="font-bold text-slate-800 text-sm sm:text-base flex items-center gap-2">
-                <LogIn className="w-4 h-4 text-blue-600" />
-                Login Administrator
-              </h3>
-              <button 
-                id="close-login-modal-btn"
-                onClick={() => {
-                  setShowLoginModal(false);
-                  setLoginError("");
-                }}
-                className="text-slate-400 hover:text-slate-600 text-lg font-bold"
-              >
-                ×
-              </button>
-            </div>
-
-            <form 
-              onSubmit={async (e) => {
-                e.preventDefault();
-                setLoginError("");
-                setAdminAuthLoading(true);
-                try {
-                  await signInWithPassword({ email: loginId.trim(), password: loginPassword });
-                  const { context } = await refreshFromSupabase();
-                  const matched: AdminAccount = { id: context.user.email || context.user.id, password: "", nama: context.displayName };
-                  setIsAdmin(true);
-                  setCalendarAuthEpoch(v => v + 1);
-                  setAdminUser(matched);
-                  localStorage.setItem("db_admin_user", JSON.stringify(matched));
-                  setShowLoginModal(false);
-                  setLoginId("");
-                  setLoginPassword("");
-                } catch (err) {
-                  try { await signOut(); } catch {}
-                  // Failed admin login must restore public data, not leave the
-                  // previous privileged/partial snapshot on screen.
-                  await refreshPublicSupabase();
-                  setLoginError(err instanceof Error ? err.message : "Login Supabase gagal.");
-                } finally {
-                  setAdminAuthLoading(false);
-                }
-              }} 
-              className="space-y-4 text-xs"
-            >
-              <div className="space-y-1">
-                <label className="block font-bold text-slate-600">Email Supabase Admin / Wakasek</label>
-                <input
-                  id="login-id-input"
-                  type="text"
-                  required
-                  placeholder="Masukkan ID..."
-                  value={loginId}
-                  onChange={(e) => setLoginId(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:border-blue-500 rounded-lg p-2.5 focus:outline-none transition-colors"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="block font-bold text-slate-600">Kata Sandi (Password)</label>
-                <input
-                  id="login-password-input"
-                  type="password"
-                  required
-                  placeholder="Masukkan password..."
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:border-blue-500 rounded-lg p-2.5 focus:outline-none transition-colors"
-                />
-              </div>
-
-              {loginError && (
-                <p className="text-[11px] text-red-600 font-semibold bg-red-50 border border-red-100 p-2 rounded-lg">
-                  ⚠️ {loginError}
-                </p>
-              )}
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  id="cancel-login-btn"
-                  type="button"
-                  onClick={() => {
-                    setShowLoginModal(false);
-                    setLoginError("");
-                  }}
-                  className="px-3 py-1.5 hover:bg-slate-100 text-slate-500 font-semibold rounded-lg transition-colors"
-                >
-                  <T>{"Batal"}</T>
-                </button>
-
-                <button
-                  id="submit-login-btn" disabled={adminAuthLoading}
-                  type="submit"
-                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors shadow-sm"
-                >
-                  Masuk
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <AdminLoginModal
+          onClose={() => setShowLoginModal(false)}
+          onLogin={async (email, password) => {
+            try {
+              await signInWithPassword({ email: email.trim(), password });
+              const { context } = await refreshFromSupabase();
+              const matched: AdminAccount = { id: context.user.email || context.user.id, password: "", nama: context.displayName };
+              setIsAdmin(true);
+              setCalendarAuthEpoch(v => v + 1);
+              setAdminUser(matched);
+              localStorage.setItem("db_admin_user", JSON.stringify(matched));
+              setShowLoginModal(false);
+            } catch (err) {
+              try { await signOut(); } catch { /* preserve original login error */ }
+              // Failed admin login must restore public data and clear privileged snapshot.
+              try { await refreshPublicSupabase(); } catch { /* preserve original login error */ }
+              throw err;
+            }
+          }}
+        />
       )}
 
       {/* Custom Confirmation Modal */}

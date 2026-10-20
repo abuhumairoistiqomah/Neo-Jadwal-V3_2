@@ -27,12 +27,14 @@ test('V3.16.3: every existing admin route is preserved and grouped logically', (
     'approval-izin', 'approved-leave-list', 'action-center', 'management-analytics', 'teacher-statistics',
     'tabel-jam-kosong', 'jam-kosong-semua', 'rekap-guru', 'master-data',
     'schedule-import', 'schedule-syaikh-import', 'schedule-incidental',
-    'substitute-constraints', 'academic-calendar', 'education-calendar-admin',
+    'substitute-constraints', 'academic-calendar', 'operational-calendar', 'education-calendar-admin',
     'schedule-control-center', 'input-pengganti', 'log-pengganti', 'statistik',
   ].sort());
   assert.equal(byId('approval-izin')?.section, 'Administrasi');
   assert.equal(byId('approved-leave-list')?.label, 'List Badal Pengajuan Badal');
   assert.equal(byId('schedule-incidental')?.section, 'Kelola Jadwal & Kalender');
+  assert.equal(byId('operational-calendar')?.adminOnly, true, 'V3.19 operational calendar must remain admin-only');
+  assert.equal(byId('operational-calendar')?.label, 'Kalender Operasional KBM');
   assert.equal(byId('management-analytics')?.section, 'Analitik & Rekap');
   assert.equal(byId('master-data')?.section, 'Data & Impor');
   assert.equal(new Set(parsed.map(item => item.id)).size, parsed.length, 'duplicate routes are not allowed');

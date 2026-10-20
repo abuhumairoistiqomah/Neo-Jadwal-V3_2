@@ -41,6 +41,7 @@ export const AdminMasterData: React.FC<Props> = ({ onBack, onRefreshSnapshot }) 
   const [classes, setClasses] = useState<AdminClassRow[]>([]);
   const [rooms, setRooms] = useState<AdminRoomRow[]>([]);
   const [query, setQuery] = useState("");
+  // Search input owns its keystrokes; parent only filters the large list after a pause.
   const [showInactive, setShowInactive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -146,7 +147,7 @@ export const AdminMasterData: React.FC<Props> = ({ onBack, onRefreshSnapshot }) 
           <button onClick={() => { setTab("rooms"); setQuery(""); }} className={`rounded-xl px-3 py-3 text-xs font-black ${tab === "rooms" ? "bg-blue-600 text-white" : "bg-slate-50 text-slate-600"}`}><Building2 className="mx-auto mb-1 w-4 h-4" /> <T>{"Ruangan"}</T></button>
         </div>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="relative flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari data..." className={`${inputClass} pl-9`} /></div>
+          <div className="relative flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><MasterSearchInput query={query} onQueryChange={setQuery} inputClass={`${inputClass} pl-9`} /></div>
           <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600"><input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Tampilkan nonaktif</label>
         </div>
       </div>
@@ -208,3 +209,15 @@ const EditorModal: React.FC<{
 
 const Field: React.FC<{ label: string; value?: string; placeholder?: string; type?: string; disabled?: boolean; onChange: (value: string) => void }> = ({ label, value = "", placeholder, type = "text", disabled, onChange }) => <label><span className={labelClass}>{label}</span><input type={type} disabled={disabled} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-500`} /></label>;
 const SelectGender: React.FC<{ value?: string; onChange: (value: string) => void }> = ({ value = "UNKNOWN", onChange }) => <label><span className={labelClass}>Gender</span><select value={value} onChange={(e) => onChange(e.target.value)} className={inputClass}><option value="UNKNOWN">UNKNOWN</option><option value="IKHWAN">IKHWAN</option><option value="AKHWAT">AKHWAT</option></select></label>;
+
+/** Debounce only the derived list filter, never the controlled input's visible text. */
+const MasterSearchInput: React.FC<{ query: string; onQueryChange: (query: string) => void; inputClass: string }> = ({ query, onQueryChange, inputClass }) => {
+  const [draft, setDraft] = useState(query);
+  useEffect(() => { setDraft(query); }, [query]);
+  useEffect(() => {
+    if (draft === query) return;
+    const timer = window.setTimeout(() => onQueryChange(draft), 130);
+    return () => window.clearTimeout(timer);
+  }, [draft, query, onQueryChange]);
+  return <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Cari data..." className={inputClass} />;
+};

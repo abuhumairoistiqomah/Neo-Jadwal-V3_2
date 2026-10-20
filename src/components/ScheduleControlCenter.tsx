@@ -23,7 +23,12 @@ import {
 } from "../infrastructure/repositories/scheduleVersionRepository";
 
 import { T } from '../i18n/LanguageProvider';
+import {DutyImpactV319Panel} from './DutyImpactV319Panel';
+import type {Teacher,LogIzinItem} from '../domain/models';
 interface ScheduleControlCenterProps {
+  teachers: Teacher[];
+  logs: LogIzinItem[];
+  schoolToday: string;
   schedules: ScheduleItem[];
   incidentals: JadwalInsidentalItem[];
   kalenderAkademik?: KalenderAkademikItem[];
@@ -87,6 +92,9 @@ function metadataSummary(version: ScheduleVersionRow): string | null {
 }
 
 export const ScheduleControlCenter: React.FC<ScheduleControlCenterProps> = ({
+  teachers,
+  logs,
+  schoolToday,
   schedules,
   incidentals,
   kalenderAkademik = [],
@@ -271,6 +279,7 @@ export const ScheduleControlCenter: React.FC<ScheduleControlCenterProps> = ({
         </div>
       ) : (
         <div className="space-y-3">
+          <DutyImpactV319Panel teachers={teachers} schedules={schedules} incidentals={incidentals} calendar={kalenderAkademik} logs={logs} today={schoolToday}/>
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-600">
             <span>Konflik lampau otomatis tersembunyi. Tombol Sudah Ditangani hanya menyembunyikan di browser ini, bukan menghapus konflik di Supabase.</span>
             <div className="flex flex-wrap gap-4">

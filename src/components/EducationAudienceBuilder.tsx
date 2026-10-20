@@ -34,7 +34,7 @@ const tagOptions = (kind: EducationTagKind, teachers: Teacher[], schedules: Sche
   return teachers.map(t=>({value:t.id||t.nama,label:t.nama})).sort((a,b)=>a.label.localeCompare(b.label));
 };
 const emptyGroup = (join: BooleanOp = 'AND'): AudienceGroup => ({ op:'OR', join, tags:[] });
-export const EducationAudienceBuilder: React.FC<Props> = ({value,onChange,teachers,schedules,memberships,managementOnly}) => {
+export const EducationAudienceBuilder: React.FC<Props> = React.memo(({value,onChange,teachers,schedules,memberships,managementOnly}: Props) => {
   const {t}=useLanguage();
   const [showPreview,setShowPreview] = useState(false);
   const update = (groups: AudienceGroup[]) => { onChange({all:false,groups}); setShowPreview(false); };
@@ -70,4 +70,4 @@ export const EducationAudienceBuilder: React.FC<Props> = ({value,onChange,teache
     <button type="button" onClick={()=>setShowPreview(!showPreview)} className="flex items-center gap-2 rounded-lg bg-indigo-700 text-white px-3 py-2 text-xs font-bold"><CheckCircle className="w-4 h-4"/> {t(showPreview?'Tutup Preview Penerima':'Preview Penerima')}</button>
     {showPreview&&<div className="bg-white p-3 rounded-xl border border-indigo-100 space-y-2"><p className="font-bold text-sm">{recipients.length} {t("kandidat guru berdasarkan tag")} {managementOnly&&<span className="text-[10px] text-red-700"><Lock className="w-3 h-3 inline"/>{t("Event rahasia tetap memerlukan login staf")}</span>}</p><div className="max-h-44 overflow-auto text-xs text-slate-700 divide-y">{recipients.map(t=><p className="py-1" key={t.id||t.nama}>{t.nama}</p>)}</div><p className="text-[10px] text-amber-700">{t("Preview berdasarkan master jadwal; kepemilikan akun dan RLS diperiksa kembali ketika event dibaca. Posisi guru2–6 diperlakukan sebagai guru tambahan/pendamping.")}</p></div>}
   </div>;
-};
+});

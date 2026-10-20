@@ -64,8 +64,8 @@ test("teacher analytics CSV is escaped and contains operational columns", () => 
     taskReadyPeriods: 1,
     taskReadinessPct: 50,
   }]);
-  assert.match(csv, /JP Reguler\/Minggu/);
-  assert.match(csv, /JP Menjadi Badal/);
+  assert.match(csv, /Total JP Mengajar Efektif/);
+  assert.match(csv, /Persentase JP Izin/);
   assert.match(csv, /Guru ""A""/);
 });
 

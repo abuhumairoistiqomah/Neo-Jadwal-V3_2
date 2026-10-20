@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useState, useDeferredValue } from "react";
 import { Check, ChevronDown } from "lucide-react";
 
 export interface SearchableSelectOption {
@@ -29,6 +29,8 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const deferredQuery = useDeferredValue(query);
+  const isStale = deferredQuery !== query;
   const selected = options.find((option) => option.value === value);
   const selectedLabel = selected?.label || "";
 
@@ -36,12 +38,12 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   useEffect(() => { if (!open) setQuery(selectedLabel); }, [selectedLabel, open]);
 
   const results = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase("id-ID");
+    const normalized = deferredQuery.trim().toLocaleLowerCase("id-ID");
     const matching = options.filter((option) => !option.disabled && (
       !normalized || option.label.toLocaleLowerCase("id-ID").includes(normalized)
     ));
     return matching.slice(0, maxResults);
-  }, [options, query, maxResults]);
+  }, [options, deferredQuery, maxResults]);
 
   const choose = (option: SearchableSelectOption) => {
     onChange(option.value);
@@ -78,7 +80,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
             setActiveIndex((previous) => Math.max(0, Math.min(results.length - 1,
               previous + (event.key === "ArrowDown" ? 1 : -1))));
           }
-          if (event.key === "Enter" && open && results.length) {
+          if (event.key === "Enter" && open && !isStale && results.length) {
             event.preventDefault();
             choose(results[Math.min(activeIndex, results.length - 1)]);
           }
@@ -93,7 +95,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
       </button>
     </div>
     {open && !disabled && <div id={listId} role="listbox" className="absolute z-[110] mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
-      {results.length ? results.map((option, index) => <button
+      {isStale ? <div className="px-3 py-3 text-xs text-slate-500" role="status">Memperbarui pilihan...</div> : results.length ? results.map((option, index) => <button
         type="button" role="option" aria-selected={option.value === value}
         key={option.value} onMouseDown={(event) => event.preventDefault()}
         onClick={() => choose(option)}
@@ -102,7 +104,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
         <Check className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${value === option.value ? "text-blue-600" : "opacity-0"}`} />
         <span className="break-words">{option.label}</span>
       </button>) : <div className="px-3 py-3 text-xs text-slate-500">Tidak ada pilihan yang cocok.</div>}
-      {options.length > maxResults && !query.trim() && <div className="border-t px-3 py-2 text-xs text-slate-400">Ketik beberapa huruf untuk mempersempit pilihan.</div>}
+      {!isStale && options.length > maxResults && !query.trim() && <div className="border-t px-3 py-2 text-xs text-slate-400">Ketik beberapa huruf untuk mempersempit pilihan.</div>}
     </div>}
   </div>;
 };

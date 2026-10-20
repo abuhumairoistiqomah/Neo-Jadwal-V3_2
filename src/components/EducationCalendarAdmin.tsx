@@ -24,6 +24,9 @@ export const EducationCalendarAdmin: React.FC<{teachers:Teacher[];schedules:Sche
   const [events,setEvents]=useState<EducationEvent[]>([]);
   const [members,setMembers]=useState<EducationMember[]>([]);
   const [form,setForm]=useState<EducationEventWrite>(emptyEvent);
+  const onAudienceRuleChange = useCallback((audience_rule: EducationEventWrite["audience_rule"]) => {
+    setForm(old => ({ ...old, audience_rule }));
+  }, []);
   const [editingId,setEditingId]=useState<string|null>(null);
   const [showPastEvents,setShowPastEvents]=useState(false);
   const [showDeletedEvents,setShowDeletedEvents]=useState(false);
@@ -105,7 +108,7 @@ export const EducationCalendarAdmin: React.FC<{teachers:Teacher[];schedules:Sche
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><div><label className={label}><T>{"Tanggal mulai"}</T></label><input type="date" className={input} value={form.start_date} onChange={e=>setForm({...form,start_date:e.target.value,end_date:form.end_date<e.target.value?e.target.value:form.end_date})}/></div><div><label className={label}><T>{"Tanggal selesai"}</T></label><input type="date" className={input} min={form.start_date} value={form.end_date} onChange={e=>setForm({...form,end_date:e.target.value})}/></div><div><label className={label}><T>{"Kategori"}</T></label><select className={input} value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>{EDUCATION_CATEGORIES.map(c=><option key={c} value={c}>{t(c)}</option>)}</select></div></div>
           <div><label className={label}><T>{"Deskripsi / instruksi"}</T></label><textarea rows={3} className={input} value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></div>
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-2"><label className="flex items-center gap-2 text-sm font-bold text-amber-900"><input type="checkbox" checked={form.management_only} onChange={e=>setForm({...form,management_only:e.target.checked,audience_rule:e.target.checked?{all:true,groups:[]}:form.audience_rule})}/> <Lock className="w-4 h-4"/> <T>{"Khusus Manajemen — Full Confidential"}</T></label><p className="text-xs text-amber-800"><T>{"Bila dicentang, seluruh event (judul, detail, jumlah) hanya dapat dibaca akun ADMIN/WAKASEK yang telah login. Tag mempersempit penerima reminder, tidak memperluas akses."}</T></p></div>
-          <EducationAudienceBuilder key={form.management_only?'private':'public'} value={form.audience_rule} onChange={audience_rule=>setForm(old=>({...old,audience_rule}))} teachers={teachers} schedules={schedules} memberships={members} managementOnly={form.management_only}/>
+          <EducationAudienceBuilder key={form.management_only?'private':'public'} value={form.audience_rule} onChange={onAudienceRuleChange} teachers={teachers} schedules={schedules} memberships={members} managementOnly={form.management_only}/>
           <div className="flex flex-wrap gap-2"><button disabled={busy} onClick={()=>void save('DRAFT')} className="bg-slate-100 hover:bg-slate-200 rounded-xl px-4 py-2.5 text-xs font-black flex items-center gap-2"><Save className="w-4 h-4"/> <T>{"Simpan Draft"}</T></button><button disabled={busy} onClick={()=>void save('PUBLISHED')} className="bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl px-4 py-2.5 text-xs font-black flex items-center gap-2"><Check className="w-4 h-4"/> Publikasikan</button></div>
         </div>
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">

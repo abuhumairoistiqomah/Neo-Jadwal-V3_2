@@ -145,6 +145,7 @@ export type ActivePage =
   | "schedule-incidental"
   | "substitute-constraints"
   | "academic-calendar"
+  | "operational-calendar"
   | "education-calendar"
   | "education-calendar-admin"
   | "schedule-control-center";

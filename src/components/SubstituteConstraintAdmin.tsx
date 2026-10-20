@@ -13,6 +13,7 @@ import {
   type OperationalTeacherRow,
   type OperationalClassRow,
   type SubstituteConstraintAdminRow,
+  type SubstituteConstraintWriteInput,
 } from "../infrastructure/repositories/operationalRulesRepository";
 
 import { T } from '../i18n/LanguageProvider';
@@ -37,6 +38,99 @@ function dateLabel(value?: string | null): string {
   return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : value;
 }
 
+interface SubstituteConstraintEditorProps {
+  editingRow: SubstituteConstraintAdminRow | null;
+  teachers: OperationalTeacherRow[];
+  canManage: boolean;
+  saving: boolean;
+  editorRef: React.RefObject<HTMLElement | null>;
+  onSave: (draft: SubstituteConstraintWriteInput) => Promise<void>;
+  onCancelEdit: () => void;
+}
+
+/** Input-local state: typing never forces the expensive restriction overview to rerender. */
+const SubstituteConstraintEditor: React.FC<SubstituteConstraintEditorProps> = ({
+  editingRow, teachers, canManage, saving, editorRef, onSave, onCancelEdit,
+}) => {
+  const editingId = editingRow?.id || null;
+  const [teacherId, setTeacherId] = useState(editingRow?.teacher_id || "");
+  const [kind, setKind] = useState<"DATE" | "WEEKLY">(editingRow?.constraint_type || "DATE");
+  const [specificDate, setSpecificDate] = useState(editingRow?.specific_date || "");
+  const [dayOfWeek, setDayOfWeek] = useState(editingRow?.day_of_week || 3);
+  const [periodStart, setPeriodStart] = useState(Number(editingRow?.period_start ?? 0));
+  const [periodEnd, setPeriodEnd] = useState(Number(editingRow?.period_end ?? 6));
+  const [validFrom, setValidFrom] = useState(editingRow?.valid_from || "");
+  const [validUntil, setValidUntil] = useState(editingRow?.valid_until || "");
+  const [reason, setReason] = useState(editingRow?.reason || "");
+  const [overrideAllowed, setOverrideAllowed] = useState(Boolean(editingRow?.override_allowed));
+  const [blocksNormalTeaching, setBlocksNormalTeaching] = useState(Boolean(editingRow?.blocks_normal_teaching));
+  const [requiresBadal, setRequiresBadal] = useState(Boolean(editingRow?.requires_badal && editingRow?.blocks_normal_teaching));
+
+  return (
+      <section ref={editorRef} style={{ scrollMarginTop: 90 }} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-black text-lg">{editingId ? "Edit Restriksi" : "Tambah Restriksi"}</h2>
+            <p className="text-xs text-slate-500">Untuk panitia outing class, pilih Tanggal Tertentu + HARD BLOCK + JP0–JP6.</p>
+          </div>
+          {editingId && <button onClick={onCancelEdit} className="text-xs font-bold text-slate-500 hover:text-slate-800 inline-flex items-center gap-1"><RotateCcw className="w-4 h-4" /> Batal Edit</button>}
+        </div>
+
+        <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <label className="xl:col-span-2"><span className="text-xs font-bold text-slate-600">Guru</span><select value={teacherId} onChange={(e) => setTeacherId(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white"><option value="">Pilih guru...</option>{teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.full_name}</option>)}</select></label>
+          <label><span className="text-xs font-bold text-slate-600">Jenis Aturan</span><select value={kind} onChange={(e) => setKind(e.target.value as "DATE" | "WEEKLY")} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white"><option value="DATE">Tanggal Tertentu</option><option value="WEEKLY">Mingguan</option></select></label>
+          <label><span className="text-xs font-bold text-slate-600">Level</span><select value={overrideAllowed ? "SOFT" : "HARD"} onChange={(e) => setOverrideAllowed(e.target.value === "SOFT")} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white"><option value="HARD">HARD BLOCK • tidak bisa dipilih</option><option value="SOFT">WARNING • masih bisa override</option></select></label>
+
+          {kind === "DATE" ? (
+            <label><span className="text-xs font-bold text-slate-600"><T>{"Tanggal"}</T></span><input type="date" value={specificDate} onChange={(e) => setSpecificDate(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" /></label>
+          ) : (
+            <label><span className="text-xs font-bold text-slate-600">Hari</span><select value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white">{DAYS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          )}
+
+          <label><span className="text-xs font-bold text-slate-600">JP Mulai</span><select value={periodStart} onChange={(e) => setPeriodStart(Number(e.target.value))} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white">{Array.from({ length: 7 }, (_, i) => <option key={i} value={i}>JP {i}</option>)}</select></label>
+          <label><span className="text-xs font-bold text-slate-600">JP Selesai</span><select value={periodEnd} onChange={(e) => setPeriodEnd(Number(e.target.value))} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white">{Array.from({ length: 7 }, (_, i) => <option key={i} value={i}>JP {i}</option>)}</select></label>
+          <button type="button" onClick={() => { setPeriodStart(0); setPeriodEnd(6); }} className="self-end border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold hover:bg-slate-50">Semua JP (0–6)</button>
+
+          {kind === "WEEKLY" && <>
+            <label><span className="text-xs font-bold text-slate-600">Berlaku Mulai (opsional)</span><input type="date" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" /></label>
+            <label><span className="text-xs font-bold text-slate-600">Berlaku Sampai (opsional)</span><input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" /></label>
+          </>}
+          <label className={`md:col-span-2 xl:col-span-4 flex items-start gap-3 rounded-2xl border p-3 cursor-pointer ${blocksNormalTeaching ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}>
+            <input type="checkbox" checked={blocksNormalTeaching} onChange={(e) => {
+              setBlocksNormalTeaching(e.target.checked);
+              if (!e.target.checked) setRequiresBadal(false);
+            }} className="mt-0.5 h-4 w-4 accent-rose-600" />
+            <span><span className="block text-sm font-black text-slate-900">Guru juga tidak bisa mengajar jadwal normal</span><span className="mt-0.5 block text-xs text-slate-500">Aktifkan untuk panitia/kegiatan yang membuat guru benar-benar meninggalkan kelas. Di Input Guru Pengganti, JP terkait akan ditandai × Izin dan tetap membutuhkan badal.</span></span>
+          </label>
+          <label className={`md:col-span-2 xl:col-span-4 flex items-start gap-3 rounded-2xl border p-3 ${!blocksNormalTeaching ? "border-slate-200 bg-slate-100 cursor-not-allowed" : requiresBadal ? "border-indigo-300 bg-indigo-50 cursor-pointer" : "border-slate-200 bg-slate-50 cursor-pointer"}`}>
+            <input type="checkbox" disabled={!blocksNormalTeaching} checked={blocksNormalTeaching && requiresBadal} onChange={(e) => setRequiresBadal(e.target.checked)} aria-describedby="requires-badal-help" className="mt-0.5 h-4 w-4 accent-indigo-600 disabled:cursor-not-allowed" />
+            <span className={!blocksNormalTeaching ? "opacity-60" : ""}>
+              <span className="block text-sm font-black text-slate-900">Kebutuhan Badal (Tugas Resmi Sekolah)</span>
+              <span id="requires-badal-help" className="mt-1 block text-xs text-slate-600">
+                {blocksNormalTeaching
+                  ? "JP mengajar aktif yang terkena restriksi perlu pengganti. Alasannya otomatis mengikuti Alasan / Kegiatan, tanpa membuat izin pribadi."
+                  : "Aktifkan 'Guru juga tidak bisa mengajar jadwal normal' terlebih dahulu untuk mengaktifkan Kebutuhan Badal."}
+              </span>
+            </span>
+          </label>
+          <label className="md:col-span-2 xl:col-span-4"><span className="text-xs font-bold text-slate-600">Alasan / Kegiatan</span><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Contoh: Panitia Outing Class" className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" /></label>
+        </div>
+        <div className="flex justify-end"><button disabled={!canManage || saving} onClick={() => void onSave({
+          teacherId, kind,
+          specificDate: kind === "DATE" ? specificDate : null,
+          dayOfWeek: kind === "WEEKLY" ? dayOfWeek : null,
+          periodStart, periodEnd,
+          validFrom: kind === "WEEKLY" ? validFrom || null : null,
+          validUntil: kind === "WEEKLY" ? validUntil || null : null,
+          reason, overrideAllowed, blocksNormalTeaching,
+          requiresBadal: blocksNormalTeaching && requiresBadal,
+          isActive: true,
+        })} className="px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white font-black flex items-center gap-2">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {editingId ? "Simpan Perubahan" : "Tambah Restriksi"}</button></div>
+      </section>
+
+  );
+};
+
 export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherDetails, incidentals, logs, calendar, substituteConstraints, onBack, onChanged }) => {
   const repository = useMemo(() => new OperationalRulesRepository(), []);
   const badalRepository = useMemo(() => new OfficialDutyBadalRepository(), []);
@@ -55,20 +149,10 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [editingId, setEditingId] = useState<string | null>(null);
-
-  const [teacherId, setTeacherId] = useState("");
-  const [kind, setKind] = useState<"DATE" | "WEEKLY">("DATE");
-  const [specificDate, setSpecificDate] = useState("");
-  const [dayOfWeek, setDayOfWeek] = useState<number>(3);
-  const [periodStart, setPeriodStart] = useState(0);
-  const [periodEnd, setPeriodEnd] = useState(6);
-  const [validFrom, setValidFrom] = useState("");
-  const [validUntil, setValidUntil] = useState("");
-  const [reason, setReason] = useState("");
-  const [overrideAllowed, setOverrideAllowed] = useState(false);
-  const [blocksNormalTeaching, setBlocksNormalTeaching] = useState(false);
-  const [requiresBadal, setRequiresBadal] = useState(false);
+  // Editor state is isolated in SubstituteConstraintEditor. Keystrokes must not
+  // rerender the coverage list or rebuild effective school schedules.
+  const [editingRow, setEditingRow] = useState<SubstituteConstraintAdminRow | null>(null);
+  const [editorRevision, setEditorRevision] = useState(0);
 
   const canManage = Boolean(context?.roles.some((role) => role === "ADMIN" || role === "WAKASEK"));
   const teacherById = useMemo(() => new Map(teachers.map((teacher) => [teacher.id, teacher])), [teachers]);
@@ -83,30 +167,38 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
       return String(teacher?.wali_kelas || teacher?.pendamping_kelas || "");
     })(),
   });
-  const currentNeeds = activeRule ? needsFor(activeRule, coverageDate) : [];
-  const currentAssignments = activeRule ? allAssignments.filter((a) => a.official_duty_constraint_id === activeRule.id && a.schedule_date === coverageDate) : [];
-  const currentCoverage = summarizeOfficialDutyCoverage(currentNeeds, currentAssignments, classIdByName);
-  const pastRulesCount = rows.filter((row) => isPastSubstituteRule(row, schoolToday)).length;
-  const displayedRules = filterOperationalHistory<SubstituteConstraintAdminRow>(rows, (row) => isPastSubstituteRule(row, schoolToday), showPastRules);
+  const currentNeeds = useMemo(() => activeRule ? needsFor(activeRule, coverageDate) : [],
+    [activeRule, coverageDate, teacherById, teacherDetails, schedules, incidentals, logs, calendar]);
+  const currentAssignments = useMemo(() => activeRule
+    ? allAssignments.filter((a) => a.official_duty_constraint_id === activeRule.id && a.schedule_date === coverageDate)
+    : [], [activeRule, allAssignments, coverageDate]);
+  const currentCoverage = useMemo(() => summarizeOfficialDutyCoverage(currentNeeds, currentAssignments, classIdByName),
+    [currentNeeds, currentAssignments, classIdByName]);
+  const pastRulesCount = useMemo(() => rows.filter((row) => isPastSubstituteRule(row, schoolToday)).length, [rows, schoolToday]);
+  const displayedRules = useMemo(() => filterOperationalHistory<SubstituteConstraintAdminRow>(rows, (row) => isPastSubstituteRule(row, schoolToday), showPastRules),
+    [rows, schoolToday, showPastRules]);
+
+  // Coverage is computed ONCE per authoritative data snapshot instead of once
+  // per restriction, per input keystroke. The map also keeps the existing
+  // DATE/WEEKLY business semantics (weekly summary is only in the dated modal).
+  const coverageByRule = useMemo(() => {
+    const output = new Map<string, ReturnType<typeof summarizeOfficialDutyCoverage>>();
+    for (const rule of displayedRules) {
+      if (!rule.requires_badal || !rule.blocks_normal_teaching || !rule.is_active) continue;
+      const needs = rule.constraint_type === "DATE" ? needsFor(rule, rule.specific_date || "") : [];
+      const assignments = allAssignments.filter((a) => a.official_duty_constraint_id === rule.id && a.schedule_date === rule.specific_date);
+      output.set(rule.id, summarizeOfficialDutyCoverage(needs, assignments, classIdByName));
+    }
+    return output;
+  }, [displayedRules, allAssignments, classIdByName, teacherById, teacherDetails, schedules, incidentals, logs, calendar]);
   useEffect(() => {
     const timer = window.setInterval(() => setSchoolToday(getSchoolTodayISO()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
 
   const resetForm = () => {
-    setEditingId(null);
-    setTeacherId("");
-    setKind("DATE");
-    setSpecificDate("");
-    setDayOfWeek(3);
-    setPeriodStart(0);
-    setPeriodEnd(6);
-    setValidFrom("");
-    setValidUntil("");
-    setReason("");
-    setOverrideAllowed(false);
-    setBlocksNormalTeaching(false);
-    setRequiresBadal(false);
+    setEditingRow(null);
+    setEditorRevision((revision) => revision + 1);
   };
 
   const load = async () => {
@@ -135,45 +227,22 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
   useEffect(() => { void load(); }, []);
 
   const startEdit = (row: SubstituteConstraintAdminRow) => {
-    setEditingId(row.id);
-    setTeacherId(row.teacher_id);
-    setKind(row.constraint_type);
-    setSpecificDate(row.specific_date || "");
-    setDayOfWeek(row.day_of_week || 3);
-    setPeriodStart(Number(row.period_start));
-    setPeriodEnd(Number(row.period_end));
-    setValidFrom(row.valid_from || "");
-    setValidUntil(row.valid_until || "");
-    setReason(row.reason || "");
-    setOverrideAllowed(Boolean(row.override_allowed));
-    setBlocksNormalTeaching(Boolean(row.blocks_normal_teaching));
-    setRequiresBadal(Boolean(row.requires_badal && row.blocks_normal_teaching));
+    setEditingRow(row);
+    setEditorRevision((revision) => revision + 1);
     requestAnimationFrame(() => editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
 
-  const save = async () => {
+  const save = async (draft: SubstituteConstraintWriteInput) => {
     if (!canManage) return;
     setSaving(true);
     setError("");
     setMessage("");
     try {
       await repository.saveSubstituteConstraint({
-        id: editingId || undefined,
-        teacherId,
-        kind,
-        specificDate: kind === "DATE" ? specificDate : null,
-        dayOfWeek: kind === "WEEKLY" ? dayOfWeek : null,
-        periodStart,
-        periodEnd,
-        validFrom: kind === "WEEKLY" ? validFrom || null : null,
-        validUntil: kind === "WEEKLY" ? validUntil || null : null,
-        reason,
-        overrideAllowed,
-        blocksNormalTeaching,
-        requiresBadal: blocksNormalTeaching && requiresBadal,
-        isActive: true,
+        ...draft,
+        id: editingRow?.id || undefined,
       });
-      setMessage(editingId ? "Restriksi guru diperbarui." : "Restriksi guru berhasil ditambahkan.");
+      setMessage(editingRow ? "Restriksi guru diperbarui." : "Restriksi guru berhasil ditambahkan.");
       resetForm();
       setRows(await repository.listSubstituteConstraints());
       await onChanged?.();
@@ -276,56 +345,16 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
       {message && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-800 text-sm font-semibold">{message}</div>}
       {error && <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-red-800 text-sm font-semibold">{error}</div>}
 
-      <section ref={editorRef} style={{ scrollMarginTop: 90 }} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="font-black text-lg">{editingId ? "Edit Restriksi" : "Tambah Restriksi"}</h2>
-            <p className="text-xs text-slate-500">Untuk panitia outing class, pilih Tanggal Tertentu + HARD BLOCK + JP0–JP6.</p>
-          </div>
-          {editingId && <button onClick={resetForm} className="text-xs font-bold text-slate-500 hover:text-slate-800 inline-flex items-center gap-1"><RotateCcw className="w-4 h-4" /> Batal Edit</button>}
-        </div>
-
-        <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
-          <label className="xl:col-span-2"><span className="text-xs font-bold text-slate-600">Guru</span><select value={teacherId} onChange={(e) => setTeacherId(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white"><option value="">Pilih guru...</option>{teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.full_name}</option>)}</select></label>
-          <label><span className="text-xs font-bold text-slate-600">Jenis Aturan</span><select value={kind} onChange={(e) => setKind(e.target.value as "DATE" | "WEEKLY")} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white"><option value="DATE">Tanggal Tertentu</option><option value="WEEKLY">Mingguan</option></select></label>
-          <label><span className="text-xs font-bold text-slate-600">Level</span><select value={overrideAllowed ? "SOFT" : "HARD"} onChange={(e) => setOverrideAllowed(e.target.value === "SOFT")} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white"><option value="HARD">HARD BLOCK • tidak bisa dipilih</option><option value="SOFT">WARNING • masih bisa override</option></select></label>
-
-          {kind === "DATE" ? (
-            <label><span className="text-xs font-bold text-slate-600"><T>{"Tanggal"}</T></span><input type="date" value={specificDate} onChange={(e) => setSpecificDate(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" /></label>
-          ) : (
-            <label><span className="text-xs font-bold text-slate-600">Hari</span><select value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white">{DAYS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-          )}
-
-          <label><span className="text-xs font-bold text-slate-600">JP Mulai</span><select value={periodStart} onChange={(e) => setPeriodStart(Number(e.target.value))} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white">{Array.from({ length: 7 }, (_, i) => <option key={i} value={i}>JP {i}</option>)}</select></label>
-          <label><span className="text-xs font-bold text-slate-600">JP Selesai</span><select value={periodEnd} onChange={(e) => setPeriodEnd(Number(e.target.value))} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white">{Array.from({ length: 7 }, (_, i) => <option key={i} value={i}>JP {i}</option>)}</select></label>
-          <button type="button" onClick={() => { setPeriodStart(0); setPeriodEnd(6); }} className="self-end border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold hover:bg-slate-50">Semua JP (0–6)</button>
-
-          {kind === "WEEKLY" && <>
-            <label><span className="text-xs font-bold text-slate-600">Berlaku Mulai (opsional)</span><input type="date" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" /></label>
-            <label><span className="text-xs font-bold text-slate-600">Berlaku Sampai (opsional)</span><input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" /></label>
-          </>}
-          <label className={`md:col-span-2 xl:col-span-4 flex items-start gap-3 rounded-2xl border p-3 cursor-pointer ${blocksNormalTeaching ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}>
-            <input type="checkbox" checked={blocksNormalTeaching} onChange={(e) => {
-              setBlocksNormalTeaching(e.target.checked);
-              if (!e.target.checked) setRequiresBadal(false);
-            }} className="mt-0.5 h-4 w-4 accent-rose-600" />
-            <span><span className="block text-sm font-black text-slate-900">Guru juga tidak bisa mengajar jadwal normal</span><span className="mt-0.5 block text-xs text-slate-500">Aktifkan untuk panitia/kegiatan yang membuat guru benar-benar meninggalkan kelas. Di Input Guru Pengganti, JP terkait akan ditandai × Izin dan tetap membutuhkan badal.</span></span>
-          </label>
-          <label className={`md:col-span-2 xl:col-span-4 flex items-start gap-3 rounded-2xl border p-3 ${!blocksNormalTeaching ? "border-slate-200 bg-slate-100 cursor-not-allowed" : requiresBadal ? "border-indigo-300 bg-indigo-50 cursor-pointer" : "border-slate-200 bg-slate-50 cursor-pointer"}`}>
-            <input type="checkbox" disabled={!blocksNormalTeaching} checked={blocksNormalTeaching && requiresBadal} onChange={(e) => setRequiresBadal(e.target.checked)} aria-describedby="requires-badal-help" className="mt-0.5 h-4 w-4 accent-indigo-600 disabled:cursor-not-allowed" />
-            <span className={!blocksNormalTeaching ? "opacity-60" : ""}>
-              <span className="block text-sm font-black text-slate-900">Kebutuhan Badal (Tugas Resmi Sekolah)</span>
-              <span id="requires-badal-help" className="mt-1 block text-xs text-slate-600">
-                {blocksNormalTeaching
-                  ? "JP mengajar aktif yang terkena restriksi perlu pengganti. Alasannya otomatis mengikuti Alasan / Kegiatan, tanpa membuat izin pribadi."
-                  : "Aktifkan 'Guru juga tidak bisa mengajar jadwal normal' terlebih dahulu untuk mengaktifkan Kebutuhan Badal."}
-              </span>
-            </span>
-          </label>
-          <label className="md:col-span-2 xl:col-span-4"><span className="text-xs font-bold text-slate-600">Alasan / Kegiatan</span><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Contoh: Panitia Outing Class" className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" /></label>
-        </div>
-        <div className="flex justify-end"><button disabled={!canManage || saving} onClick={() => void save()} className="px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white font-black flex items-center gap-2">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {editingId ? "Simpan Perubahan" : "Tambah Restriksi"}</button></div>
-      </section>
+      <SubstituteConstraintEditor
+        key={editorRevision}
+        editingRow={editingRow}
+        teachers={teachers}
+        canManage={canManage}
+        saving={saving}
+        editorRef={editorRef}
+        onSave={save}
+        onCancelEdit={resetForm}
+      />
 
       <section className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"><div><h2 className="font-black text-lg">Daftar Restriksi</h2><p className="text-xs text-slate-500">Aturan aktif langsung dibaca engine rekomendasi badal. Histori tidak dihapus.</p></div><label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer"><input type="checkbox" checked={showPastRules} onChange={(event) => setShowPastRules(event.target.checked)} className="h-4 w-4 accent-red-600" /> Lihat yang sudah lewat ({pastRulesCount})</label></div>
@@ -341,8 +370,7 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
                 {row.requires_badal && row.is_active && <div className="mt-1 text-xs font-bold text-indigo-700">Kebutuhan Badal • Tugas Resmi Sekolah</div>}
               </div>
               <div className="flex flex-wrap gap-2 shrink-0">{row.requires_badal && row.blocks_normal_teaching && row.is_active && (() => {
-                const needs = row.constraint_type === "DATE" ? needsFor(row, row.specific_date || "") : [];
-                const assigned = summarizeOfficialDutyCoverage(needs, allAssignments.filter((a) => a.official_duty_constraint_id === row.id && a.schedule_date === row.specific_date), classIdByName);
+                const assigned = coverageByRule.get(row.id) || { total: 0, assigned: 0, pending: 0 };
                 const complete = row.constraint_type === "DATE" && assigned.total > 0 && assigned.pending === 0;
                 return <button type="button" disabled={complete} onClick={() => openBadal(row)} className={`px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-1 ${complete ? "bg-emerald-100 text-emerald-800 cursor-default" : "bg-indigo-600 text-white hover:bg-indigo-700"}`}>
                   {complete ? <CheckCircle2 className="w-4 h-4"/> : <UserPlus className="w-4 h-4"/>}

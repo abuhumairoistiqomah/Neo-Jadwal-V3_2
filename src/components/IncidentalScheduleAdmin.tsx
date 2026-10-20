@@ -76,12 +76,21 @@ export const IncidentalScheduleAdmin: React.FC<Props> = ({ schedules, incidental
 
   // Advisory only: display the potential conflict before saving; the database
   // now audits occupied rooms instead of rejecting date-specific incidentals.
-  const roomConflictPreview = useMemo(() => {
-    if (!date || !selectedClass || !roomId.trim() || !subject.trim()) return [];
-    const other = buildEffectiveScheduleForDate({
+  // Expensive effective-schedule resolution depends on the DATE and SOURCE rows,
+  // never on each character of subject, room, or the selected teacher list.
+  const effectiveRowsForRoomPreview = useMemo(() => {
+    if (!date) return [];
+    return buildEffectiveScheduleForDate({
       date, schedules, jadwalInsidental: incidentals.filter((row) => row.id !== editingId),
       logs, kalenderAkademik,
-    }).filter((row) => row.isActive && Number(row.jam_ke) === period
+    });
+  }, [date, schedules, incidentals, logs, kalenderAkademik, editingId]);
+
+  // Small advisory classification can react immediately to subject edits;
+  // authoritative collision validation remains on save in the repository.
+  const roomConflictPreview = useMemo(() => {
+    if (!date || !selectedClass || !roomId.trim() || !subject.trim()) return [];
+    const other = effectiveRowsForRoomPreview.filter((row) => row.isActive && Number(row.jam_ke) === period
       && !isClassMatch(row.kelas, selectedClass.display_name)
       && normalizeImportKey(row.ruangan) === normalizeImportKey(roomId));
     const incomingTeachers = teacherIds.map((id) => context?.teachers.find((t) => t.id === id)?.full_name || "")
@@ -93,7 +102,7 @@ export const IncidentalScheduleAdmin: React.FC<Props> = ({ schedules, incidental
       { mapel: subject, guru: incomingTeachers, kelasgabung: combined ? "Ya" : "Tidak" },
     ]).conflict) return [];
     return [...new Set(other.map((row) => row.kelas))];
-  }, [date, selectedClass, period, roomId, subject, teacherIds, combined, schedules, incidentals, logs, kalenderAkademik, editingId, context]);
+  }, [date, selectedClass, period, roomId, subject, teacherIds, combined, effectiveRowsForRoomPreview, context]);
 
   const teacherCandidates = useMemo(() => {
     if (!context || !selectedClass) return [];

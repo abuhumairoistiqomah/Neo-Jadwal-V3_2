@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { LogIzinItem, Teacher, renderTaskWithLinks } from "../types";
 import { 
   ArrowLeft, ClipboardList, Copy, Check, Search, Calendar, 
@@ -9,6 +9,8 @@ import { buildSubstituteReminderWhatsappMessage, findTeacherByName } from "../do
 import { groupSubstituteLogsForBroadcast } from "../domain/inval/broadcastGrouping";
 import { getPublicScheduleUrl } from "../domain/whatsappPublicUrl";
 import { SearchableSelect } from "./ui/SearchableSelect";
+import { getSchoolTodayISO } from "../domain/date";
+import { partitionSubstituteHistory } from "../domain/substituteLogVisibility";
 
 import { T } from '../i18n/LanguageProvider';
 
@@ -45,6 +47,16 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
   onBack,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [showPastLogs, setShowPastLogs] = useState(false);
+  // Re-evaluate on navigation/remount/refresh; school date is Asia/Jakarta.
+  const [schoolToday, setSchoolToday] = useState(() => getSchoolTodayISO());
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const next = getSchoolTodayISO();
+      setSchoolToday((current) => current === next ? current : next);
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const [copiedDate, setCopiedDate] = useState<string | null>(null);
   const [copiedIndividualId, setCopiedIndividualId] = useState<string | null>(null);
   const [editingLog, setEditingLog] = useState<LogIzinItem | null>(null);
@@ -113,11 +125,15 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
   ) : [];
 
 
-  // Group logs by Date
+  const visibility = useMemo(() => partitionSubstituteHistory(logs, schoolToday), [logs, schoolToday]);
+
+  // Group only visible logs; historical logs remain intact for audit, editing and WA.
   const groupedLogs = useMemo(() => {
     // 1. Filter logs based on search query (guru_izin, guru_pengganti, mapel, kelas)
-    const filtered = logs.filter(log => {
-      const q = searchQuery.toLowerCase();
+    const visibleLogs = showPastLogs ? logs : visibility.currentAndUpcoming;
+    const query = searchQuery.trim().toLocaleLowerCase("id-ID");
+    const filtered = visibleLogs.filter(log => {
+      const q = query;
       return (
         log.guru_izin.toLowerCase().includes(q) ||
         log.guru_pengganti.toLowerCase().includes(q) ||
@@ -144,7 +160,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
         items: items.sort((a, b) => a.jam_ke - b.jam_ke)
       }))
       .sort((a, b) => b.tanggal.localeCompare(a.tanggal));
-  }, [logs, searchQuery]);
+  }, [logs, visibility, searchQuery, showPastLogs]);
 
   // Generate WhatsApp text format for a specific date and copy to clipboard (Broadcast)
   const handleCopyWA = (tanggal: string, items: LogIzinItem[]) => {
@@ -284,7 +300,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
               Histori Log Guru Pengganti
             </h2>
             <p className="text-sm text-gray-500 mt-1">
-              Daftar guru pengganti yang pernah dijadwalkan, diurutkan dari tanggal terbaru.
+              Default menampilkan hari ini dan mendatang (Asia/Jakarta). Histori lampau tetap tersimpan dan bisa ditampilkan kembali.
             </p>
           </div>
 
@@ -302,6 +318,15 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
             </div>
           </div>
         </div>
+
+        <label className="mb-5 inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-bold text-slate-700">
+          <input type="checkbox" checked={showPastLogs} onChange={(e) => setShowPastLogs(e.target.checked)}
+            aria-label="Tampilkan yang sudah lewat" className="h-4 w-4 accent-indigo-600" />
+          Tampilkan yang sudah lewat ({visibility.past.length})
+        </label>
+        {!showPastLogs && visibility.past.length > 0 && <p className="mb-4 text-xs text-slate-500">
+          {visibility.past.length} record sebelum {schoolToday} disembunyikan dari tampilan, tidak dihapus dari database.
+        </p>}
 
         {/* Info Banner */}
         <div className="text-xs font-semibold text-indigo-800 bg-indigo-50/75 border border-indigo-100/50 p-4 rounded-xl flex items-start gap-2.5 mb-6">
@@ -550,8 +575,8 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
         ) : (
           <div className="py-12 text-center bg-gray-50 border border-dashed border-gray-200 rounded-2xl">
             <CheckCircle className="w-8 h-8 text-indigo-300 mx-auto mb-2" />
-            <p className="font-semibold text-gray-700 text-sm">Belum Ada Log Terdaftar</p>
-            <p className="text-xs text-gray-400 mt-1">Data log guru pengganti kosong atau tidak cocok dengan filter pencarian.</p>
+            <p className="font-semibold text-gray-700 text-sm">{!showPastLogs && visibility.past.length > 0 ? 'Tidak ada log aktif pada filter ini' : 'Belum Ada Log Terdaftar'}</p>
+            <p className="text-xs text-gray-400 mt-1">{!showPastLogs && visibility.past.length > 0 ? 'Aktifkan “Tampilkan yang sudah lewat” untuk melihat histori.' : 'Data log guru pengganti kosong atau tidak cocok dengan filter pencarian.'}</p>
           </div>
         )}
 

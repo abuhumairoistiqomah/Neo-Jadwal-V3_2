@@ -1,3 +1,9 @@
+> **V3.19 RC1 — Kalender Operasional KBM:** lihat [`TRACE_V3_19_RC1_CALENDAR_FOUNDATION.md`](TRACE_V3_19_RC1_CALENDAR_FOUNDATION.md). Migration baru harus dijalankan di STAGING lebih dahulu.
+
+# E-JADWAL V3.18 RC1 — Log History & Teacher Activity Analytics
+
+**Staging release candidate.** Based on V3.17.3 RC3.1. Run the new staff-only SQL migration before loading Management Analytics; the Log Izin & WA visual change needs no migration. See `TRACE_V3_18_RELEASE.md`.
+
 > **V3.16 RC1:** Lihat [TRACE_V3_16_EDUCATION_CALENDAR.md](TRACE_V3_16_EDUCATION_CALENDAR.md) untuk Kalender Pendidikan, Smart Audience Tags AND/OR, migration SQL, dan release gate.
 
 # E-JADWAL V3.15 — Weekly Effective Schedule & Official-Duty Badal
