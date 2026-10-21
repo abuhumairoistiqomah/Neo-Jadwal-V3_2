@@ -101,6 +101,15 @@ describe("V3.11 Inval write payload", () => {
     assert.equal(bundle.rows[0]?.task_text, "Kerjakan latihan halaman 12");
   });
 
+  it("RC4.2: no-badal decision has null substitute UUID and cannot be used at JP0", () => {
+    const noBadalLog = {...baseLog, guru_pengganti:"__TEAM_TEACHING_NO_BADAL__"};
+    const bundle=buildInvalWriteBundle({logs:[noBadalLog],teachers,constraints:[]});
+    assert.equal(bundle.rows[0]?.substitute_teacher_id,null);
+    assert.equal(bundle.rows[0]?.coverage_decision,"NO_SUBSTITUTE");
+    assert.deepEqual(bundle.rows[0]?.constraint_ids,[]);
+    assert.throws(() => buildInvalWriteBundle({logs:[{...noBadalLog,jam_ke:0}],teachers,constraints:[]}),/JP0/i);
+  });
+
   it("rejects a matching hard constraint before reaching the database", () => {
     assert.throws(
       () => buildInvalWriteBundle({

@@ -343,6 +343,40 @@ describe("V3.7 Supabase mapper — Dashboard compatibility", () => {
     assert.equal(result[0]?.tugas, "Kerjakan halaman 12\nhttps://example.com/task");
   });
 
+  it("RC4.2: repairs missing subject using dated override before weekday master without inventing teacher subject", () => {
+    const missingSubject = {
+      id: "blank-subject", schedule_date: "2026-10-21", class_id: "class-1", period: 2,
+      subject_snapshot: "", absent_teacher_id: "teacher-1", status: "ASSIGNED",
+      substitute_teacher_id: "teacher-2",
+    };
+    const master = [{id:"master-1",class_id:"class-1",day_of_week:3,period:2,subject:"Al-Qur'an",is_active:true}];
+    const incidentals = [{id:"dated-1",schedule_date:"2026-10-21",class_id:"class-1",period:2,override_subject:"Tahsin"}];
+    const dated = mapCoverageRows([missingSubject], classes, teachers, [], [], master, incidentals);
+    assert.equal(dated[0]?.mapel, "Tahsin");
+    assert.equal(dated[0]?.coverage_status, "ASSIGNED");
+    const fallback = mapCoverageRows([missingSubject], classes, teachers, [], [], master, []);
+    assert.equal(fallback[0]?.mapel, "Al-Qur'an");
+    const newerWithoutSubject = [{...incidentals[0],id:"dated-2",updated_at:"2026-10-21T09:00:00Z",override_subject:""}];
+    const previousWithTimestamp = [{...incidentals[0],updated_at:"2026-10-21T08:00:00Z"}];
+    const inherits = mapCoverageRows([missingSubject],classes,teachers,[],[],master,[...previousWithTimestamp,...newerWithoutSubject]);
+    assert.equal(inherits[0]?.mapel,"Al-Qur'an");
+    const snapshot = mapCoverageRows([{...missingSubject,subject_snapshot:"Tajwid"}], classes, teachers, [], [], master, incidentals);
+    assert.equal(snapshot[0]?.mapel, "Tajwid");
+    const historical = mapCoverageRows([{...missingSubject,class_id:null,class_name_snapshot:"06 INTER 1 I"}],classes,teachers,[],[],master,[]);
+    assert.equal(historical[0]?.mapel,"Al-Qur'an");
+    const unresolved = mapCoverageRows([missingSubject], classes, teachers);
+    assert.equal(unresolved[0]?.mapel, "");
+  });
+
+  it("RC4.2: no-substitute and waiting statuses stay distinguishable without fake replacement", () => {
+    const base = {id:"n",schedule_date:"2026-10-21",class_id:"class-1",period:2,subject_snapshot:"Math",absent_teacher_id:"teacher-1"};
+    const rows = mapCoverageRows([{...base,status:"NO_SUBSTITUTE"},{...base,id:"w",status:"WAITING"}],classes,teachers);
+    assert.equal(rows[0].coverage_status,"NO_SUBSTITUTE");
+    assert.equal(rows[1].coverage_status,"WAITING");
+    assert.equal(rows[0].guru_pengganti,"");
+    assert.equal(rows[1].guru_pengganti,"");
+  });
+
   it("preserves historical class snapshot when legacy coverage has class_id null", () => {
     const result = mapCoverageRows(
       [

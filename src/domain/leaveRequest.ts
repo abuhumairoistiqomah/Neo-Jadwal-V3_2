@@ -274,6 +274,29 @@ export function buildTeacherLeaveSlots(args: {
   return result;
 }
 
+/**
+ * Partial-day leave selection: explicitly chosen JP plus FREE periods strictly
+ * between the earliest and latest selected teaching JP. JP-0 is never pulled
+ * in as a gap automatically. A free period outside that range stays optional.
+ */
+export function resolvePartialLeaveSelection(
+  slots: LeaveRequestPeriodDraft[], explicitKeys: ReadonlySet<string>,
+): Set<string> {
+  const explicit = new Set(slots.filter(slot => explicitKeys.has(slot.key)).map(slot => slot.key));
+  const teachingPeriods = slots
+    .filter(slot => slot.periodType === "TEACHING" && explicit.has(slot.key))
+    .map(slot => slot.period);
+  if (teachingPeriods.length < 2) return explicit;
+  const first = Math.min(...teachingPeriods);
+  const last = Math.max(...teachingPeriods);
+  for (const slot of slots) {
+    if (slot.periodType === "FREE" && slot.period > first && slot.period < last) {
+      explicit.add(slot.key);
+    }
+  }
+  return explicit;
+}
+
 export function buildPublicLeaveSubmission(
   input: PublicLeaveSubmissionInput,
 ): PublicLeaveSubmissionPayload {

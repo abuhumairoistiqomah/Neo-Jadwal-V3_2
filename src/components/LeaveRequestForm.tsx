@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ShieldCheck as ShieldCheckIcon,
   ArrowLeft,
@@ -24,6 +24,7 @@ import type {
 import {
   buildPublicLeaveSubmission,
   buildTeacherLeaveSlots,
+  resolvePartialLeaveSelection,
   type LeaveRequestType,
 } from "../domain/leaveRequest";
 import { syncTaskResourcesWithText } from "../domain/taskResources";
@@ -32,6 +33,7 @@ import { uploadPublicLeaveTaskFile, type PublicLeaveTaskUploadResult } from "../
 import { SupabasePublicLeaveRepository, submitStaffLeaveRequest, type ExistingLeaveFreeCorrection, type PendingManagementEvidence } from "../infrastructure/repositories/supabasePublicLeaveRepository";
 import type { PublicLeaveSubmitResult } from "../infrastructure/repositories/publicLeaveRepository";
 import { isSupabaseConfigured } from "../infrastructure/supabase/client";
+import { SupabasePublicScheduleRepository } from "../infrastructure/repositories/supabasePublicScheduleRepository";
 import { evidenceExtension } from "../domain/managementLeaveEvidence";
 import { getCurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
 
@@ -106,7 +108,17 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
   const [requestType, setRequestType] = useState<LeaveRequestType>("FULL_DAY");
   const [reason, setReason] = useState("");
   const [detail, setDetail] = useState("");
-  const [selectedSlotKeys, setSelectedSlotKeys] = useState<Set<string>>(new Set());
+  const [explicitSelectedKeys, setExplicitSelectedKeys] = useState<Set<string>>(new Set());
+  // Form-local authoritative snapshot: does not unmount the parent form when refreshed.
+  const [freshSchedule, setFreshSchedule] = useState<{
+    schedules: ScheduleItem[]; jadwalInsidental: JadwalInsidentalItem[];
+    logs: LogIzinItem[]; kalenderAkademik: KalenderAkademikItem[];
+  } | null>(null);
+  const [scheduleLoading, setScheduleLoading] = useState(true);
+  const [scheduleError, setScheduleError] = useState("");
+  const [scheduleRefresh, setScheduleRefresh] = useState(0);
+  const [scheduleChanged, setScheduleChanged] = useState(false);
+  const lastScheduleFingerprint = useRef("");
   const [taskTextByPeriod, setTaskTextByPeriod] = useState<Record<number, string>>({});
   const [uploadedByPeriod, setUploadedByPeriod] = useState<Record<number, PublicLeaveTaskUploadResult[]>>({});
   const [pendingFilesByPeriod, setPendingFilesByPeriod] = useState<Record<number, File[]>>({});
@@ -155,35 +167,83 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
     }
   }, [selectedTeacher, sortedTeachers, teacherTouched]);
 
+  // A new date or manual refresh reads live Supabase, including dated incidental
+  // teachers/subjects. Do not silently submit using a stale parent snapshot.
+  useEffect(() => {
+    let cancelled = false;
+    setScheduleLoading(true);
+    setScheduleError("");
+    setFreshSchedule(null);
+    void new SupabasePublicScheduleRepository().loadPublicState().then(({ snapshot }) => {
+      if (cancelled) return;
+      setFreshSchedule({
+        schedules: snapshot.schedules, jadwalInsidental: snapshot.jadwalInsidental,
+        logs: snapshot.logs, kalenderAkademik: snapshot.kalenderAkademik,
+      });
+    }).catch((reason: unknown) => {
+      if (!cancelled) setScheduleError(`Gagal membaca jadwal terbaru: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }).finally(() => { if (!cancelled) setScheduleLoading(false); });
+    return () => { cancelled = true; };
+  }, [scheduleDate, scheduleRefresh]);
+
   const availableSlots = useMemo(
-    () => buildTeacherLeaveSlots({
+    () => freshSchedule ? buildTeacherLeaveSlots({
       teacherName,
       teacher: sortedTeachers.find((teacher) => teacher.nama === teacherName),
       scheduleDate,
-      schedules,
-      jadwalInsidental,
-      logs,
-      kalenderAkademik,
-    }),
-    [teacherName, scheduleDate, schedules, jadwalInsidental, logs, kalenderAkademik, sortedTeachers],
+      schedules: freshSchedule.schedules,
+      jadwalInsidental: freshSchedule.jadwalInsidental,
+      logs: freshSchedule.logs,
+      kalenderAkademik: freshSchedule.kalenderAkademik,
+    }) : [],
+    [teacherName, scheduleDate, freshSchedule, sortedTeachers],
   );
 
-  useEffect(() => {
-    const availableKeys = new Set(availableSlots.map((slot) => slot.key));
-    setSelectedSlotKeys((current) => {
-      if (requestType === "FULL_DAY") return availableKeys;
-      return new Set([...current].filter((key) => availableKeys.has(key)));
-    });
-  }, [availableSlots, requestType]);
+  // Explicit clicks and automatically bridged FREE JPs are separate. Releasing
+  // an endpoint removes its formerly automatic FREE selection as well.
+  const selectedSlotKeys = useMemo(
+    () => requestType === "FULL_DAY"
+      ? new Set(availableSlots.map(slot => slot.key))
+      : resolvePartialLeaveSelection(availableSlots, explicitSelectedKeys),
+    [availableSlots, explicitSelectedKeys, requestType],
+  );
 
   const selectedSlots = useMemo(
     () => availableSlots.filter((slot) => selectedSlotKeys.has(slot.key)),
     [availableSlots, selectedSlotKeys],
   );
 
+  useEffect(() => {
+    // Explicit choices on a different date or for a different teacher are unsafe.
+    lastScheduleFingerprint.current = "";
+    setScheduleChanged(false);
+    setExplicitSelectedKeys(new Set());
+    setTaskTextByPeriod({});
+  }, [teacherName, scheduleDate]);
+
+  useEffect(() => {
+    if (!freshSchedule) return;
+    const signature = JSON.stringify(availableSlots.map(slot => [slot.key,slot.classCode,slot.subject,
+      slot.periodType,slot.source,...slot.assignments.map(a => `${a.classCode}:${a.subject}:${a.source}`)]));
+    if (lastScheduleFingerprint.current && lastScheduleFingerprint.current !== signature) {
+      // A date/teacher is unchanged but the authoritative assignments changed.
+      // Never carry tasks for an old class or subject into a new one.
+      setExplicitSelectedKeys(new Set());
+      setTaskTextByPeriod({});
+      setPendingFilesByPeriod({});
+      setScheduleChanged(true);
+    }
+    lastScheduleFingerprint.current = signature;
+  }, [availableSlots, freshSchedule]);
+
   const toggleSlot = (key: string) => {
     if (requestType === "FULL_DAY") return;
-    setSelectedSlotKeys((current) => {
+    const slot = availableSlots.find(item => item.key === key);
+    if (!slot) return;
+    // Automatically bridged FREE JPs must stay selected while between two
+    // selected teaching JPs. Change the endpoints to release that FREE JP.
+    if (slot.periodType === "FREE" && selectedSlotKeys.has(key) && !explicitSelectedKeys.has(key)) return;
+    setExplicitSelectedKeys((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -192,10 +252,10 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
   };
 
   const handleRequestType = (type: LeaveRequestType) => {
+    if (type === requestType) return;
     setRequestType(type);
-    if (type === "FULL_DAY") {
-      setSelectedSlotKeys(new Set(availableSlots.map((slot) => slot.key)));
-    }
+    // Moving from full-day to partial ALWAYS begins with no boxes checked.
+    setExplicitSelectedKeys(new Set());
   };
 
   useEffect(() => {
@@ -319,6 +379,10 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
       setError("Supabase belum dikonfigurasi. Pengajuan tidak dikirim.");
       return;
     }
+    if (!pendingEvidenceDraft && (scheduleLoading || scheduleError || !freshSchedule)) {
+      setError("Jadwal efektif belum diverifikasi. Tunggu atau klik Perbarui jadwal.");
+      return;
+    }
     setSubmitting(true);
     try {
       if (pendingEvidenceDraft) {
@@ -385,7 +449,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
     setPendingFilesByPeriod({});
     setTaskTextByPeriod({});
     setRequestType("FULL_DAY");
-    setSelectedSlotKeys(new Set(availableSlots.map((slot) => slot.key)));
+    setExplicitSelectedKeys(new Set());
   };
 
   const handleTaskFileUpload = async (period: number, file: File) => {
@@ -567,7 +631,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
                   className={`rounded-xl border px-4 py-3 text-left transition-colors ${requestType === "PARTIAL" ? "border-emerald-400 bg-emerald-50 text-emerald-900" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"}`}
                 >
                   <div className="font-extrabold text-sm"><T>{"Sebagian JP"}</T></div>
-                  <div className="text-[11px] opacity-70 mt-0.5"><T>{"Centang hanya JP yang ditinggalkan."}</T></div>
+                  <div className="text-[11px] opacity-70 mt-0.5">Centang dimulai kosong; JP FREE di antara dua JP izin dipilih otomatis.</div>
                 </button>
               </div>
             </div>
@@ -703,8 +767,17 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
               <div className="text-xs text-slate-300 mt-1"><T>{"JP-0 Homeroom wajib digantikan bila wali/pendamping kelas tidak hadir. JP mengajar menghasilkan badal; JP free hanya dicatat untuk statistik."}</T></div>
             </div>
 
+            <div className="px-4 pt-3 flex items-center justify-between gap-2">
+              <p className="text-[11px] text-slate-600">{scheduleLoading ? "Memuat jadwal efektif terbaru…" : scheduleError ? "Jadwal belum terverifikasi" : "Jadwal efektif Supabase • insidental termasuk"}</p>
+              <button type="button" disabled={scheduleLoading || submitting} onClick={() => setScheduleRefresh(n => n + 1)}
+                className="text-xs font-bold text-emerald-700 disabled:text-slate-400 underline">Perbarui jadwal</button>
+            </div>
+            {scheduleChanged && <p role="status" className="mx-4 mt-2 rounded-lg bg-amber-50 border border-amber-200 p-2 text-xs text-amber-800">Jadwal efektif berubah sejak pilihan sebelumnya. Pilihan JP dan materi tugas dikosongkan demi mencegah salah pengajuan.</p>}
+            {scheduleError && <p role="alert" className="mx-4 mt-2 rounded-lg bg-red-50 border border-red-200 p-2 text-xs text-red-700">{scheduleError}. Pengajuan dinonaktifkan sampai jadwal berhasil dimuat.</p>}
             <div className="p-4 space-y-2 max-h-[460px] overflow-y-auto">
-              {!teacherName ? (
+              {scheduleLoading ? (<div role="status" className="text-sm text-slate-500 p-4">Mengambil jadwal terbaru dari Supabase…</div>) :
+              scheduleError ? (<div className="text-sm text-red-700 p-4">Gagal memuat jadwal. Tekan Perbarui jadwal.</div>) :
+              !teacherName ? (
                 <div className="p-5 text-center text-sm text-slate-400"><T>{"Pilih guru terlebih dahulu."}</T></div>
               ) : availableSlots.length === 0 ? (
                 <div className="p-5 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-slate-200">
@@ -726,7 +799,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
                         <input
                           type="checkbox"
                           checked={checked}
-                          disabled={requestType === "FULL_DAY"}
+                          disabled={requestType === "FULL_DAY" || (slot.periodType === "FREE" && checked && !explicitSelectedKeys.has(slot.key))}
                           onChange={() => toggleSlot(slot.key)}
                           className="mt-1 w-4 h-4 accent-emerald-600"
                         />
@@ -787,7 +860,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
               )}
               <button
                 type="submit"
-                disabled={submitting || !teacherName || !reason.trim() || selectedSlots.length === 0 || !isSupabaseConfigured}
+                disabled={submitting || (!pendingEvidenceDraft && (scheduleLoading || Boolean(scheduleError) || !freshSchedule || !teacherName || !reason.trim() || selectedSlots.length === 0 || !isSupabaseConfigured))}
                 className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-black px-4 py-3 flex items-center justify-center gap-2 transition-colors"
               >
                 <Send className="w-4 h-4" /> {submitting ? "Mengirim Izin & Tugas..." : "Kirim Pengajuan Izin"}

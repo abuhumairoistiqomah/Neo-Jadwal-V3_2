@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Ban, CalendarDays, Edit3, Loader2, RefreshCw, RotateCcw, Save, ShieldAlert, ToggleLeft, ToggleRight, UserPlus, CheckCircle2, X } from "lucide-react";
+import { ArrowLeft, Ban, CalendarDays, Edit3, Loader2, RefreshCw, RotateCcw, Save, ShieldAlert, ToggleLeft, ToggleRight, UserPlus, CheckCircle2, X, Trash2, ArchiveRestore } from "lucide-react";
 import type { Teacher, JadwalInsidentalItem, KalenderAkademikItem, LogIzinItem, ScheduleItem } from "../domain/models";
-import { findOfficialDutyNeeds, summarizeOfficialDutyCoverage, isOfficialDutyRuleDate, type OfficialDutyAssignment } from "../domain/officialDutyBadal";
+import { findOfficialDutyNeeds, summarizeOfficialDutyCoverage, isOfficialDutyRuleDate, TEAM_TEACHING_NO_BADAL, type OfficialDutyAssignment } from "../domain/officialDutyBadal";
 import { OfficialDutyBadalRepository } from "../infrastructure/repositories/officialDutyBadalRepository";
+import type { InvalWriteMetadata, InvalTaskResourceInput } from "../domain/inval/invalWrite";
 import { InputGuruPengganti } from "./InputGuruPengganti";
 import type { SubstituteConstraint } from "../domain/substituteAvailability";
 import { getCurrentUserContext, type CurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
@@ -124,7 +125,7 @@ const SubstituteConstraintEditor: React.FC<SubstituteConstraintEditorProps> = ({
           validUntil: kind === "WEEKLY" ? validUntil || null : null,
           reason, overrideAllowed, blocksNormalTeaching,
           requiresBadal: blocksNormalTeaching && requiresBadal,
-          isActive: true,
+          isActive: editingRow?.is_active ?? true,
         })} className="px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white font-black flex items-center gap-2">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {editingId ? "Simpan Perubahan" : "Tambah Restriksi"}</button></div>
       </section>
 
@@ -144,6 +145,7 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
   const [coverageSaving, setCoverageSaving] = useState(false);
   const [rows, setRows] = useState<SubstituteConstraintAdminRow[]>([]);
   const [showPastRules, setShowPastRules] = useState(false);
+  const [showDeletedRules, setShowDeletedRules] = useState(false);
   const [schoolToday, setSchoolToday] = useState(getSchoolTodayISO);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -175,8 +177,10 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
   const currentCoverage = useMemo(() => summarizeOfficialDutyCoverage(currentNeeds, currentAssignments, classIdByName),
     [currentNeeds, currentAssignments, classIdByName]);
   const pastRulesCount = useMemo(() => rows.filter((row) => isPastSubstituteRule(row, schoolToday)).length, [rows, schoolToday]);
-  const displayedRules = useMemo(() => filterOperationalHistory<SubstituteConstraintAdminRow>(rows, (row) => isPastSubstituteRule(row, schoolToday), showPastRules),
-    [rows, schoolToday, showPastRules]);
+  const displayedRules = useMemo(() => filterOperationalHistory<SubstituteConstraintAdminRow>(
+    rows.filter((row) => showDeletedRules || !row.deleted_at),
+    (row) => isPastSubstituteRule(row, schoolToday), showPastRules,
+  ), [rows, schoolToday, showPastRules, showDeletedRules]);
 
   // Coverage is computed ONCE per authoritative data snapshot instead of once
   // per restriction, per input keystroke. The map also keeps the existing
@@ -184,7 +188,7 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
   const coverageByRule = useMemo(() => {
     const output = new Map<string, ReturnType<typeof summarizeOfficialDutyCoverage>>();
     for (const rule of displayedRules) {
-      if (!rule.requires_badal || !rule.blocks_normal_teaching || !rule.is_active) continue;
+      if (rule.deleted_at || !rule.requires_badal || !rule.blocks_normal_teaching || !rule.is_active) continue;
       const needs = rule.constraint_type === "DATE" ? needsFor(rule, rule.specific_date || "") : [];
       const assignments = allAssignments.filter((a) => a.official_duty_constraint_id === rule.id && a.schedule_date === rule.specific_date);
       output.set(rule.id, summarizeOfficialDutyCoverage(needs, assignments, classIdByName));
@@ -208,7 +212,7 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
       const [ctx, teacherRows, constraintRows, classRows, assignmentRows] = await Promise.all([
         getCurrentUserContext(),
         repository.listTeachers(),
-        repository.listSubstituteConstraints(),
+        repository.listSubstituteConstraints(true),
         repository.listClasses(),
         badalRepository.listAllAssignments(),
       ]);
@@ -244,7 +248,7 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
       });
       setMessage(editingRow ? "Restriksi guru diperbarui." : "Restriksi guru berhasil ditambahkan.");
       resetForm();
-      setRows(await repository.listSubstituteConstraints());
+      setRows(await repository.listSubstituteConstraints(true));
       await onChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -253,14 +257,42 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
     }
   };
 
-  const toggleActive = async (row: SubstituteConstraintAdminRow) => {
+  const changeRule = async (
+    row: SubstituteConstraintAdminRow,
+    action: "DEACTIVATE" | "ACTIVATE" | "SOFT_DELETE" | "RESTORE",
+  ) => {
+    if (!canManage || saving) return;
+    const teacherName = teacherById.get(row.teacher_id)?.full_name || row.teacher_id;
+    const related = allAssignments.filter((a) => a.official_duty_constraint_id === row.id).length;
+    let note = "";
+    if (action === "SOFT_DELETE" || action === "DEACTIVATE") {
+      const operation = action === "SOFT_DELETE" ? "SOFT DELETE" : "NONAKTIFKAN";
+      if (!window.confirm(`${operation} restriksi ${teacherName}?\n\n${related} slot badal tugas resmi terkait akan dibatalkan dan disembunyikan dari Log Badal. Badal dari izin lain tetap aman. Histori tetap tersimpan untuk audit.`)) return;
+      const response = window.prompt(`Alasan ${operation.toLowerCase()} (wajib untuk audit):`, "Kegiatan dibatalkan / guru kembali mengajar");
+      if (response === null) return;
+      note = response.trim();
+      if (!note) { setError("Alasan wajib diisi agar pembatalan dapat diaudit."); return; }
+    } else if (action === "RESTORE") {
+      if (!window.confirm(`Pulihkan restriksi ${teacherName} dalam kondisi NONAKTIF?\nBadal lama yang sudah dibatalkan TIDAK otomatis kembali.`)) return;
+    } else if (!window.confirm(`Aktifkan kembali restriksi ${teacherName}?\nBadal lama TIDAK otomatis dikembalikan. Periksa kebutuhan badal lagi.`)) return;
+    setSaving(true);
     setError("");
+    setMessage("");
     try {
-      await repository.setSubstituteConstraintActive(row.id, !row.is_active);
-      setRows(await repository.listSubstituteConstraints());
+      const result = await repository.changeSubstituteConstraint(row.id, action, note);
+      const [freshRows, freshAssignments] = await Promise.all([
+        repository.listSubstituteConstraints(true), badalRepository.listAllAssignments(),
+      ]);
+      setRows(freshRows);
+      setAllAssignments(freshAssignments);
+      if (activeRule?.id === row.id) setActiveRule(null);
+      if (editingRow?.id === row.id) resetForm();
       await onChanged?.();
+      setMessage(`${action === "SOFT_DELETE" ? "Restriksi di-soft delete" : action === "DEACTIVATE" ? "Restriksi dinonaktifkan" : action === "RESTORE" ? "Restriksi dipulihkan sebagai nonaktif" : "Restriksi diaktifkan"}. ${result.coverage_hidden} record badal tugas resmi dan ${result.tasks_hidden} tugas terkait disembunyikan. Jadwal diperbarui.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -282,25 +314,27 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
   const pendingNeeds = currentNeeds.filter((need) => !currentAssignments.some((assignment) =>
     assignment.schedule_date === need.date && assignment.period === need.period
     && assignment.class_id === classIdByName.get(need.className.toLocaleLowerCase("id-ID"))
-    && ["ASSIGNED", "COMPLETED"].includes(assignment.status) && assignment.substitute_teacher_id));
-  const saveOfficialDutySelections = async (newLogs: Omit<LogIzinItem, "id">[]) => {
+    && ((["ASSIGNED", "COMPLETED"].includes(assignment.status) && assignment.substitute_teacher_id)
+      || (assignment.status === "NO_SUBSTITUTE" && !assignment.substitute_teacher_id))));
+  const saveOfficialDutySelections = async (newLogs: Omit<LogIzinItem, "id">[], _room?: unknown, metadata?: InvalWriteMetadata) => {
     if (!activeRule || !canManage || coverageSaving) throw new Error("Penyimpanan sedang berlangsung atau akses tidak tersedia.");
     if (!isOfficialDutyRuleDate(activeRule, coverageDate)) throw new Error("Tanggal bukan tanggal restriksi yang berlaku.");
     const expected = new Map(pendingNeeds.map((need) => [`${need.period}|${need.className.toLocaleLowerCase("id-ID")}`, need]));
-    const assignments: Array<{ period: number; classId: string; substituteTeacherId: string }> = [];
+    const assignments: Array<{ period: number; classId: string; substituteTeacherId: string | null; taskText: string; taskResources: InvalTaskResourceInput[] }> = [];
     const seen = new Set<string>();
-    for (const row of newLogs) {
+    for (const [rowIndex, row] of newLogs.entries()) {
       const key = `${row.jam_ke}|${row.kelas.toLocaleLowerCase("id-ID")}`;
       if (row.tanggal !== coverageDate || !expected.has(key) || seen.has(key)) {
         throw new Error("Pilihan keluar dari slot restriksi atau tercatat lebih dari sekali. Periksa ulang daftar badal.");
       }
       const classId = classIdByName.get(row.kelas.toLocaleLowerCase("id-ID"));
-      const substitute = teacherDetails.find((teacher) => teacher.nama.toLocaleLowerCase("id-ID") === row.guru_pengganti.toLocaleLowerCase("id-ID"));
-      if (!classId || !substitute?.id || substitute.id === activeRule.teacher_id) {
-        throw new Error(`Kelas atau guru badal tidak dikenali untuk JP${row.jam_ke}: ${row.kelas}.`);
+      const noAdditionalBadal = row.guru_pengganti === TEAM_TEACHING_NO_BADAL;
+      const substitute = noAdditionalBadal ? null : teacherDetails.find((teacher) => teacher.nama.toLocaleLowerCase("id-ID") === row.guru_pengganti.toLocaleLowerCase("id-ID"));
+      if (!classId || (!noAdditionalBadal && (!substitute?.id || substitute.id === activeRule.teacher_id)) || (noAdditionalBadal && row.jam_ke === 0)) {
+        throw new Error(`Kelas atau keputusan badal tidak valid untuk JP${row.jam_ke}: ${row.kelas}.`);
       }
       seen.add(key);
-      assignments.push({ period: row.jam_ke, classId, substituteTeacherId: substitute.id });
+      assignments.push({ period: row.jam_ke, classId, substituteTeacherId: noAdditionalBadal ? null : substitute!.id, taskText: String(row.tugas || "").trim(), taskResources: metadata?.taskResourcesByRow?.[rowIndex] || [] });
     }
     if (assignments.length !== expected.size) {
       throw new Error(`Penugasan belum lengkap: ${assignments.length}/${expected.size} slot. Jangan simpan sebagian tanpa konfirmasi.`);
@@ -309,20 +343,46 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
     let saved = 0;
     try {
       for (const assignment of assignments) {
-        await badalRepository.assign({
-          constraintId: activeRule.id, date: coverageDate, ...assignment,
-        });
+        if (assignment.substituteTeacherId === null) {
+          await badalRepository.acknowledgeTeamTeaching({
+            constraintId: activeRule.id, date: coverageDate, period: assignment.period, classId: assignment.classId,
+            taskText: assignment.taskText, taskResources: assignment.taskResources,
+          });
+        } else {
+          await badalRepository.assign({
+            constraintId: activeRule.id, date: coverageDate,
+            period: assignment.period, classId: assignment.classId,
+            substituteTeacherId: assignment.substituteTeacherId,
+          });
+        }
         saved++;
       }
       setAllAssignments(await badalRepository.listAllAssignments());
       await onChanged?.();
-      setMessage(`Berhasil menyimpan ${saved} slot badal tugas resmi: ${activeRule.reason}`);
+      setMessage(`Berhasil menangani ${saved} JP tugas resmi (badal atau team teaching): ${activeRule.reason}`);
     } catch (error) {
       // Assign RPC writes one slot at a time. A partial result must be shown,
       // not treated as an all-or-nothing transaction.
       try { setAllAssignments(await badalRepository.listAllAssignments()); } catch { /* surface original error */ }
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(`${saved}/${assignments.length} slot sempat tersimpan. Refresh status sebelum mencoba lagi. ${detail}`);
+    } finally {
+      setCoverageSaving(false);
+    }
+  };
+
+  const reopenTeamTeaching = async (coverageId: string) => {
+    if (!canManage || coverageSaving) return;
+    if (!window.confirm("Batalkan keputusan team teaching pada JP ini? Slot akan kembali membutuhkan keputusan badal.")) return;
+    setCoverageSaving(true);
+    setError("");
+    try {
+      await badalRepository.reopenTeamTeaching(coverageId);
+      setAllAssignments(await badalRepository.listAllAssignments());
+      setMessage("Keputusan team teaching dibatalkan; JP kembali perlu ditangani.");
+      await onChanged?.();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setCoverageSaving(false);
     }
@@ -357,14 +417,14 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
       />
 
       <section className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"><div><h2 className="font-black text-lg">Daftar Restriksi</h2><p className="text-xs text-slate-500">Aturan aktif langsung dibaca engine rekomendasi badal. Histori tidak dihapus.</p></div><label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer"><input type="checkbox" checked={showPastRules} onChange={(event) => setShowPastRules(event.target.checked)} className="h-4 w-4 accent-red-600" /> Lihat yang sudah lewat ({pastRulesCount})</label></div>
+        <div className="px-5 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"><div><h2 className="font-black text-lg">Daftar Restriksi</h2><p className="text-xs text-slate-500">Nonaktif / Soft Delete ikut membatalkan badal tugas resmi yang berasal dari aturan ini. Histori tetap diaudit.</p></div><div className="flex flex-wrap gap-3"><label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer"><input type="checkbox" checked={showPastRules} onChange={(event) => setShowPastRules(event.target.checked)} className="h-4 w-4 accent-red-600" /> Lihat yang sudah lewat ({pastRulesCount})</label><label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer"><input type="checkbox" checked={showDeletedRules} onChange={(event) => setShowDeletedRules(event.target.checked)} className="h-4 w-4 accent-red-600" /> Lihat soft delete ({rows.filter(r => r.deleted_at).length})</label></div></div>
         <div className="p-5 space-y-3">
           {loading ? <div className="py-10 text-center text-slate-500"><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Memuat restriksi...</div> : displayedRules.length === 0 ? <div className="py-10 text-center text-slate-400">{pastRulesCount > 0 && !showPastRules ? "Tidak ada aturan yang berlaku hari ini atau mendatang. Centang histori untuk melihat yang sudah lewat." : "Belum ada restriksi."}</div> : displayedRules.map((row) => {
             const teacher = teacherById.get(row.teacher_id);
             const dayLabel = DAYS.find(([value]) => value === row.day_of_week)?.[1] || "Semua Hari";
-            return <div key={row.id} className={`rounded-2xl border p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3 ${row.is_active ? "border-red-200 bg-red-50/40" : "border-slate-200 bg-slate-50 opacity-70"}`}>
+            return <div key={row.id} className={`rounded-2xl border p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3 ${row.deleted_at ? "border-slate-200 bg-slate-100 opacity-70" : row.is_active ? "border-red-200 bg-red-50/40" : "border-slate-200 bg-slate-50 opacity-70"}`}>
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2"><span className="font-black text-slate-900">{teacher?.full_name || row.teacher_id}</span><span className={`text-[10px] font-black px-2 py-1 rounded-lg ${row.override_allowed ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"}`}>{row.override_allowed ? "SOFT WARNING" : "HARD BLOCK"}</span>{row.blocks_normal_teaching && <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-rose-100 text-rose-800">× TIDAK MENGAJAR NORMAL</span>}{!row.is_active && <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-slate-200 text-slate-600">NONAKTIF</span>}</div>
+                <div className="flex flex-wrap items-center gap-2"><span className="font-black text-slate-900">{teacher?.full_name || row.teacher_id}</span><span className={`text-[10px] font-black px-2 py-1 rounded-lg ${row.override_allowed ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"}`}>{row.override_allowed ? "SOFT WARNING" : "HARD BLOCK"}</span>{row.blocks_normal_teaching && <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-rose-100 text-rose-800">× TIDAK MENGAJAR NORMAL</span>}{!row.is_active && !row.deleted_at && <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-slate-200 text-slate-600">NONAKTIF</span>}{row.deleted_at && <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-rose-100 text-rose-700">SOFT DELETED</span>}</div>
                 <div className="text-sm text-slate-700 mt-1 flex flex-wrap gap-x-3 gap-y-1"><span><T>{"JP"}</T> {row.period_start}–{row.period_end}</span><span>•</span>{row.constraint_type === "DATE" ? <span><CalendarDays className="w-3.5 h-3.5 inline mr-1" />{dateLabel(row.specific_date)}</span> : <span>{dayLabel}{row.valid_from || row.valid_until ? ` • ${dateLabel(row.valid_from)} – ${dateLabel(row.valid_until)}` : ""}</span>}</div>
                 <div className="text-xs text-slate-500 mt-1">{row.reason}</div>
                 {row.requires_badal && row.is_active && <div className="mt-1 text-xs font-bold text-indigo-700">Kebutuhan Badal • Tugas Resmi Sekolah</div>}
@@ -374,9 +434,9 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
                 const complete = row.constraint_type === "DATE" && assigned.total > 0 && assigned.pending === 0;
                 return <button type="button" disabled={complete} onClick={() => openBadal(row)} className={`px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-1 ${complete ? "bg-emerald-100 text-emerald-800 cursor-default" : "bg-indigo-600 text-white hover:bg-indigo-700"}`}>
                   {complete ? <CheckCircle2 className="w-4 h-4"/> : <UserPlus className="w-4 h-4"/>}
-                  {complete ? "Badal Aman" : row.constraint_type === "DATE" ? `Tentukan Badal (${assigned.assigned}/${assigned.total})` : "Tentukan Badal per Tanggal"}
+                  {complete ? "Badal Aman / Team Teaching" : row.constraint_type === "DATE" ? `Tentukan Badal (${assigned.assigned}/${assigned.total})` : "Tentukan Badal per Tanggal"}
                 </button>;
-              })()}<button onClick={() => startEdit(row)} className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-bold flex items-center gap-1"><Edit3 className="w-4 h-4" /> Edit</button><button onClick={() => void toggleActive(row)} className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-bold flex items-center gap-1">{row.is_active ? <ToggleRight className="w-5 h-5 text-emerald-600" /> : <ToggleLeft className="w-5 h-5 text-slate-400" />} {row.is_active ? "Aktif" : "Nonaktif"}</button></div>
+              })()}{row.deleted_at ? <button type="button" disabled={!canManage || saving} onClick={() => void changeRule(row, "RESTORE")} className="px-3 py-2 rounded-xl border border-emerald-200 bg-white text-emerald-800 hover:bg-emerald-50 text-sm font-bold flex items-center gap-1 disabled:opacity-40"><ArchiveRestore className="w-4 h-4" /> Pulihkan (Nonaktif)</button> : <><button type="button" disabled={!canManage || saving} onClick={() => startEdit(row)} className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-bold flex items-center gap-1 disabled:opacity-40"><Edit3 className="w-4 h-4" /> Edit</button><button type="button" disabled={!canManage || saving} onClick={() => void changeRule(row, row.is_active ? "DEACTIVATE" : "ACTIVATE")} className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-bold flex items-center gap-1 disabled:opacity-40">{row.is_active ? <ToggleRight className="w-5 h-5 text-emerald-600" /> : <ToggleLeft className="w-5 h-5 text-slate-400" />} {row.is_active ? "Aktif" : "Nonaktif"}</button><button type="button" disabled={!canManage || saving} onClick={() => void changeRule(row, "SOFT_DELETE")} className="px-3 py-2 rounded-xl border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 text-sm font-bold flex items-center gap-1 disabled:opacity-40"><Trash2 className="w-4 h-4" /> Soft Delete</button></>}</div>
             </div>;
           })}
         </div>
@@ -394,8 +454,18 @@ export const SubstituteConstraintAdmin: React.FC<Props> = ({ schedules, teacherD
           {activeRule.constraint_type === "WEEKLY" && <label className="block mb-4 max-w-sm text-sm font-bold">Tanggal tugas resmi (sesuai restriksi)
             <input type="date" value={coverageDate} onChange={(event) => setCoverageDate(event.target.value)} className="block mt-1 w-full border rounded-xl p-2.5" />
           </label>}
+          {currentAssignments.filter(a => a.status === "NO_SUBSTITUTE" && !a.substitute_teacher_id).map(a =>
+            <div key={a.id} className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+              <div><strong>✓ Ditangani Team Teaching</strong> • {a.class_name_snapshot} • JP {a.period}
+                <p className="text-xs text-emerald-700">Tidak ada badal tambahan; keputusan tercatat dan bisa dikoreksi.</p>
+              </div>
+              <button type="button" disabled={coverageSaving || !canManage}
+                onClick={() => void reopenTeamTeaching(a.id)}
+                className="px-3 py-2 rounded-lg border border-emerald-300 bg-white text-emerald-900 font-bold disabled:opacity-50">Batalkan keputusan</button>
+            </div>
+          )}
           {!isOfficialDutyRuleDate(activeRule, coverageDate) ? <p className="rounded-xl bg-amber-50 p-4 text-amber-900">Tanggal tidak sesuai hari atau masa berlaku restriksi.</p>
-            : currentCoverage.pending === 0 ? <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 font-bold text-emerald-800">{currentCoverage.total > 0 ? "Seluruh kebutuhan badal pada tanggal ini sudah aman." : "Tidak ada JP mengajar aktif yang membutuhkan badal pada tanggal ini."}</p>
+            : currentCoverage.pending === 0 ? <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 font-bold text-emerald-800">{currentCoverage.total > 0 ? "Seluruh JP tugas resmi telah ditangani (badal atau team teaching)." : "Tidak ada JP mengajar aktif yang membutuhkan badal pada tanggal ini."}</p>
               : <InputGuruPengganti
                   key={`${activeRule.id}|${coverageDate}`}
                   teachers={teacherDetails}

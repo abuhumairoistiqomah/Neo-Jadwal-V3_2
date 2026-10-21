@@ -28,6 +28,7 @@ import {
 } from "../domain/inval/recommendationPerformance";
 import { expandInvalSessionRowsForPersistence, groupInvalScheduleItems } from "../domain/inval/sessionGrouping";
 import { scopeInvalRowsToOfficialDuty, coversExactlyOfficialDutySlots } from "../domain/inval/officialDutySelection";
+import { TEAM_TEACHING_NO_BADAL } from "../domain/officialDutyBadal";
 import { buildApprovedLeaveOperatorRows } from "../domain/inval/approvedLeaveSelection";
 import type { WaitingBadalSession } from "../domain/leaveApproval";
 
@@ -100,6 +101,7 @@ interface CandidateRecommendation {
 }
 
 interface CandidateSelectDropdownProps {
+  allowTeamTeachingNoBadal?: boolean;
   id: string;
   rowIndex: number;
   value: string;
@@ -108,6 +110,7 @@ interface CandidateSelectDropdownProps {
 }
 
 const CandidateSelectDropdown: React.FC<CandidateSelectDropdownProps> = React.memo(({
+  allowTeamTeachingNoBadal = false,
   id,
   rowIndex,
   value,
@@ -298,6 +301,7 @@ const CandidateSelectDropdown: React.FC<CandidateSelectDropdownProps> = React.me
         aria-hidden="true"
       >
         <option value="">-- Pilih Guru Pengganti --</option>
+        {allowTeamTeachingNoBadal && <option value={TEAM_TEACHING_NO_BADAL}>Tidak perlu ada badal — ditangani team teaching</option>}
         {recommendations.map(c => (
           <option key={c.teacher.nama} value={c.teacher.nama}>
             {c.teacher.nama}
@@ -313,7 +317,12 @@ const CandidateSelectDropdown: React.FC<CandidateSelectDropdownProps> = React.me
           isOpen ? "border-indigo-500 ring-2 ring-indigo-100" : "border-gray-200 hover:border-indigo-300"
         }`}
       >
-        {selectedCandidate ? (
+        {allowTeamTeachingNoBadal && value === TEAM_TEACHING_NO_BADAL ? (
+          <div className="flex-1 min-w-0 space-y-1">
+            <span className="font-bold text-emerald-800 text-sm">Tidak perlu ada badal</span>
+            <p className="text-xs text-emerald-700">Ditangani team teaching yang tersedia • bukan guru badal tambahan</p>
+          </div>
+        ) : selectedCandidate ? (
           <div className="flex-1 min-w-0 space-y-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-bold text-gray-900 text-sm">
@@ -343,7 +352,7 @@ const CandidateSelectDropdown: React.FC<CandidateSelectDropdownProps> = React.me
         )}
 
         <div className="flex items-center gap-1 shrink-0 text-gray-400">
-          {selectedCandidate && (
+          {(selectedCandidate || (allowTeamTeachingNoBadal && value === TEAM_TEACHING_NO_BADAL)) && (
             <span
               role="button"
               tabIndex={0}
@@ -381,6 +390,18 @@ const CandidateSelectDropdown: React.FC<CandidateSelectDropdownProps> = React.me
 
           {/* List Options */}
           <div className="overflow-y-auto flex-1 divide-y divide-gray-100">
+            {allowTeamTeachingNoBadal && (
+              <button type="button" className="w-full text-left px-3 py-3 border-b-2 border-emerald-200 bg-emerald-50 hover:bg-emerald-100"
+                onClick={() => {
+                  if (!window.confirm("Tidak perlu badal tambahan untuk slot ini? Pastikan guru team teaching yang tersisa benar-benar dapat menangani kelas. Sistem akan memverifikasinya sebelum menyimpan.")) return;
+                  onChange(rowIndex, TEAM_TEACHING_NO_BADAL, []);
+                  setIsOpen(false);
+                  setSearchQuery("");
+                }}>
+                <span className="text-sm font-black text-emerald-900">✓ Tidak perlu ada badal</span>
+                <span className="block text-xs text-emerald-800 mt-1">Ditangani team teaching yang tersedia (bukan nama guru pengganti)</span>
+              </button>
+            )}
             {/* 1. Best Recommendations */}
             {bestList.length > 0 && (
               <div>
@@ -2077,6 +2098,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                           value={row.selectedPengganti}
                           onChange={handlePenggantiChange}
                           recommendations={recommendations}
+                          allowTeamTeachingNoBadal={row.jam_ke > 0}
                         />
 
                         {/* Candidate Workload UI Card */}
@@ -2226,7 +2248,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                               targetMapel: row.mapel,
                               rowIndex: index,
                             })}
-                            disabled={!row.selectedPengganti}
+                            disabled={!row.selectedPengganti || row.selectedPengganti === TEAM_TEACHING_NO_BADAL}
                             className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 disabled:bg-slate-100 disabled:text-slate-400 font-bold text-xs rounded-xl border border-indigo-200/80 disabled:border-slate-200 flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:cursor-not-allowed shadow-2xs"
                             title={row.selectedPengganti ? `Verifikasi jadwal ${row.selectedPengganti}` : "Pilih guru pengganti terlebih dahulu"}
                           >
@@ -2236,7 +2258,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                         </div>
 
                         {/* Per-JP Task / Material Link input field */}
-                        {!officialDutySlots && <div className="mt-2.5">
+                        {(!officialDutySlots || row.selectedPengganti === TEAM_TEACHING_NO_BADAL) && <div className="mt-2.5">
                           <label className="block text-[11px] font-bold text-gray-500 mb-1">
                             📌 {taskOwnership === "LEAVE_TEACHER" ? "Tugas dari Guru Izin" : "Tugas / Link Materi"} ({row.jam_ke === 0 ? "JP-0" : `Jam Ke-${row.jam_ke}`}):
                           </label>

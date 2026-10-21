@@ -10,6 +10,7 @@ export interface SubstituteBroadcastSession {
   kelasList: string[];
   mapel: string;
   guru_pengganti: string;
+  coverage_status?: string;
   sourceRows: LogIzinItem[];
 }
 
@@ -37,6 +38,7 @@ export const groupSubstituteLogsForBroadcast = (
       Number(row.jam_ke),
       norm(row.mapel),
       norm(row.guru_pengganti),
+      norm(row.coverage_status),
     ].join("|");
 
     const existing = groups.get(key);
@@ -57,6 +59,7 @@ export const groupSubstituteLogsForBroadcast = (
       kelasList: String(row.kelas || "").trim() ? [String(row.kelas).trim()] : [],
       mapel: row.mapel,
       guru_pengganti: row.guru_pengganti,
+      coverage_status: row.coverage_status,
       sourceRows: [row],
       firstIndex: index,
     });

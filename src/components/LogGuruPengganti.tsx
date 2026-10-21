@@ -70,6 +70,10 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
     value: String(teacher.id), label: teacher.nama,
   })).sort((a, b) => a.label.localeCompare(b.label, "id")), [teachers]);
 
+  const displaySubject = (log: LogIzinItem) => log.mapel.trim() || "Mapel belum tercatat — periksa jadwal";
+  const displaySubstitute = (log: LogIzinItem) => log.guru_pengganti.trim() ||
+    (log.coverage_status === "NO_SUBSTITUTE" ? "Ditangani team teaching" : "Badal belum ditentukan");
+
   const openEditor = (log: LogIzinItem) => {
     const chosen = teachers.find((t) => t.id && (
       t.id === log.substitute_teacher_id || t.nama.trim().toLocaleLowerCase("id-ID") === log.guru_pengganti.trim().toLocaleLowerCase("id-ID")
@@ -187,7 +191,13 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
       const sessions = groupSubstituteLogsForBroadcast(logsList);
       sessions.forEach((session, index) => {
         const kelas = session.kelasList.join(" + ");
-        section += `${index + 1}. *JP ${session.jam_ke}* (*${kelas}* - *${session.mapel}*) digantikan oleh *${session.guru_pengganti}*\n`;
+        const subject = session.mapel.trim() || "Mapel belum tercatat — periksa jadwal";
+        const substitute = session.guru_pengganti.trim();
+        section += substitute
+          ? `${index + 1}. *JP ${session.jam_ke}* (*${kelas}* - *${subject}*) digantikan oleh *${substitute}*\n`
+          : session.coverage_status === "NO_SUBSTITUTE"
+            ? `${index + 1}. *JP ${session.jam_ke}* (*${kelas}* - *${subject}*) — *Tidak perlu badal tambahan (team teaching)*\n`
+            : `${index + 1}. *JP ${session.jam_ke}* (*${kelas}* - *${subject}*) — *Badal belum ditentukan*\n`;
       });
       
       teacherSections.push(section.trimEnd());
@@ -210,7 +220,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
     absentTeacherName: log.guru_izin.trim(),
     dateLabel: formatIndoDate(log.tanggal),
     period: log.jam_ke,
-    subject: log.mapel.trim(),
+    subject: log.mapel.trim() || "Mapel belum tercatat — periksa jadwal",
     className: log.kelas.trim(),
     task: log.tugas,
   });
@@ -407,7 +417,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                           </td>
                           <td className="p-3 font-semibold text-gray-800">{log.guru_izin}</td>
                           <td className="p-3 text-gray-500 italic font-medium">{log.alasan}</td>
-                          <td className="p-3 font-medium">{log.mapel}</td>
+                          <td className="p-3 font-medium">{displaySubject(log)}</td>
                           <td className="p-3 font-bold text-gray-800">{log.kelas}</td>
                           <td className="p-3 text-xs max-w-xs">
                             {log.tugas ? (
@@ -420,7 +430,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                           </td>
                           <td className="p-3">
                             <span className="font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded">
-                              {log.guru_pengganti}
+                              {displaySubstitute(log)}
                             </span>
                           </td>
                           <td className="sticky right-0 z-10 min-w-[168px] w-[168px] p-2 bg-white text-center shadow-[-4px_0_8px_-6px_#64748b]">
@@ -428,7 +438,8 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                               {/* Compact icon actions: keep Edit/Delete reachable on narrow laptops */}
                               <button
                                 id={`remind-indiv-${log.id}`}
-                                onClick={() => handleCopyIndividualReminder(log)}
+                                disabled={!log.guru_pengganti.trim()}
+                                onClick={() => { if (log.guru_pengganti.trim()) handleCopyIndividualReminder(log); }}
                                 className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-all ${
                                   copiedIndividualId === log.id
                                     ? "bg-emerald-600 text-white border-emerald-700"
@@ -525,11 +536,11 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                       <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-50/50 text-[10px] text-gray-500">
                         <div>
                           <span className="block text-gray-400">Mapel / Kelas</span>
-                          <span className="font-bold text-gray-700">{log.mapel} (Kelas {log.kelas})</span>
+                          <span className="font-bold text-gray-700">{displaySubject(log)} (Kelas {log.kelas})</span>
                         </div>
                         <div>
                           <span className="block text-emerald-600 font-bold">PENGGANTI (INVAL)</span>
-                          <span className="font-bold text-emerald-800">{log.guru_pengganti}</span>
+                          <span className="font-bold text-emerald-800">{displaySubstitute(log)}</span>
                         </div>
                       </div>
 
@@ -537,7 +548,8 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                       <div className="pt-2 border-t border-gray-100 flex flex-col sm:flex-row justify-end gap-2">
                         <button
                           id={`remind-indiv-mob-${log.id}`}
-                          onClick={() => handleCopyIndividualReminder(log)}
+                          disabled={!log.guru_pengganti.trim()}
+                          onClick={() => { if (log.guru_pengganti.trim()) handleCopyIndividualReminder(log); }}
                           className={`w-full py-2 rounded-lg text-xs font-bold transition-all shadow-2xs flex items-center justify-center gap-1.5 border ${
                             copiedIndividualId === log.id
                               ? "bg-emerald-600 text-white border-emerald-700"

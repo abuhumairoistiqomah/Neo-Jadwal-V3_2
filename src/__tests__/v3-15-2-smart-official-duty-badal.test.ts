@@ -41,3 +41,24 @@ test("Aturan Badal routes to existing smart recommender with official-duty-only 
   assert.match(smart,/coversExactlyOfficialDutySlots/);
   assert.doesNotMatch(rules,/new SupabaseInvalWriteRepository/);
 });
+
+test("RC4.2: no-badal keeps official-duty path without fake teacher", () => {
+  const ui=readFileSync("src/components/InputGuruPengganti.tsx","utf8");
+  const admin=readFileSync("src/components/SubstituteConstraintAdmin.tsx","utf8");
+  const repo=readFileSync("src/infrastructure/repositories/officialDutyBadalRepository.ts","utf8");
+  const sql=readFileSync("supabase/migrations/202610210001_v3_19_rc4_1_team_teaching_no_badal.sql","utf8");
+  assert.match(ui,/allowTeamTeachingNoBadal=\{row\.jam_ke > 0\}/);
+  assert.match(ui,/Tidak perlu ada badal/);
+  assert.match(admin,/badalRepository\.acknowledgeTeamTeaching/);
+  assert.match(admin,/badalRepository\.reopenTeamTeaching/);
+  assert.match(repo,/ejadwal_acknowledge_official_duty_team_teaching_task_v319/);
+  const taskMigration=readFileSync("supabase/migrations/202610210004_v3_19_rc4_4_team_teaching_tasks.sql","utf8");
+  assert.match(taskMigration,/create or replace function public\.ejadwal_acknowledge_official_duty_team_teaching_task_v319/);
+  assert.match(taskMigration,/ejadwal_save_team_teaching_task_v319/);
+  assert.match(sql,/status='NO_SUBSTITUTE'/);
+  assert.match(sql,/substitute_teacher_id=null/);
+  assert.match(sql,/TEAM_TEACHING_NOT_AVAILABLE/);
+  assert.match(sql,/OFFICIAL_DUTY_COVERAGE_ALREADY_EXISTS/);
+  assert.match(sql,/REOPEN_OFFICIAL_DUTY_TEAM_TEACHING/);
+  assert.doesNotMatch(sql,/insert into public\.leave_requests/i);
+});

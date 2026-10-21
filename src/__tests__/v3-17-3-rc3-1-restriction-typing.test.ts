@@ -35,7 +35,7 @@ test('RC3.1: save and edit preserve the business payload; do not save on typing'
   assert.doesNotMatch(editor, /repository\./);
   assert.match(admin, /await repository\.saveSubstituteConstraint\(\{\s*\.\.\.draft,\s*id: editingRow\?\.id \|\| undefined/);
   assert.match(admin, /setEditorRevision\(\(revision\) => revision \+ 1\)/);
-  assert.match(admin, /setRows\(await repository\.listSubstituteConstraints\(\)\)/);
+  assert.match(admin, /setRows\(await repository\.listSubstituteConstraints\((?:true)?\)\)/);
   assert.match(admin, /await onChanged\?\.\(\)/);
 });
 

@@ -95,6 +95,8 @@ test('migration mismatch is explicit, and failed loads never present an empty-li
 
 test('every SQL migration has a unique timestamp version',()=>{
   const names=readdirSync('supabase/migrations').filter(name=>name.endsWith('.sql'));
+  assert.deepEqual(names.filter(name=>/_verify\.sql$|_readonly\.sql$/i.test(name)),[],
+    'Read-only verifier SQL must stay outside supabase/migrations');
   const versionCounts=new Map<string,number>();
   for(const name of names) {
     const version=name.split('_')[0];

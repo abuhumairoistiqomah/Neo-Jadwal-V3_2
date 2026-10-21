@@ -1,4 +1,6 @@
 import {TeacherDutyV319Admin} from './TeacherDutyV319Admin';
+import {TeacherDutyLogV319Panel} from './TeacherDutyLogV319Panel';
+import type {Teacher,ScheduleItem,JadwalInsidentalItem,KalenderAkademikItem,LogIzinItem} from '../domain/models';
 import React,{useEffect,useMemo,useRef,useState} from 'react';
 import {ArrowLeft,CalendarRange,CheckCircle2,FileUp,RefreshCw,Save,ShieldAlert,AlertTriangle,RotateCcw} from 'lucide-react';
 import {getCurrentUserContext} from '../infrastructure/auth/supabaseAuthRepository';
@@ -11,7 +13,7 @@ const dateLabel=(s:string)=>s.split('-').reverse().join('/');
 const initialTerm:OperationalTerm={term_code:DEFAULT_TERM_V319.code,title:DEFAULT_TERM_V319.title,kbm_start:DEFAULT_TERM_V319.start,kbm_end:DEFAULT_TERM_V319.end,weekdays:[1,2,3,4,5],is_active:true};
 const sameExisting=(proposal:CalendarProposal,events:AcademicEventGroup[],classIds:string[]) => events.some(e=>e.status==='ACTIVE' && e.dateStart===proposal.start && e.dateEnd===proposal.end && e.eventName.trim().toLocaleLowerCase('id-ID')===proposal.label.trim().toLocaleLowerCase('id-ID') && e.periodStart===proposal.periodStart && e.periodEnd===proposal.periodEnd && (proposal.scope==='ALL' ? e.scope==='ALL' : e.scope==='CLASS' && classIds.length===e.classIds.length && classIds.every(id=>e.classIds.includes(id))));
 
-export const OperationalCalendarV319Admin:React.FC<{onBack:()=>void;onChanged?:()=>Promise<void>|void}> = ({onBack,onChanged})=>{
+export const OperationalCalendarV319Admin:React.FC<{onBack:()=>void;onChanged?:()=>Promise<void>|void;teachers:Teacher[];schedules:ScheduleItem[];incidentals:JadwalInsidentalItem[];calendar:KalenderAkademikItem[];logs:LogIzinItem[]}> = ({onBack,onChanged,teachers,schedules,incidentals,calendar,logs})=>{
   const repo=useMemo(()=>new OperationalRulesRepository(),[]);
   const termRepo=useMemo(()=>new OperationalCalendarV319Repository(),[]);
   const fileRef=useRef<HTMLInputElement>(null);
@@ -28,7 +30,7 @@ export const OperationalCalendarV319Admin:React.FC<{onBack:()=>void;onChanged?:(
   const [selected,setSelected]=useState<string[]>([]);
   const [importErrors,setImportErrors]=useState<string[]>([]);
   const [showExisting,setShowExisting]=useState(false);
-  const [tab,setTab]=useState<'PERIODE'|'EXCEPTIONS'|'TEACHER_DUTY'>('PERIODE');
+  const [tab,setTab]=useState<'PERIODE'|'EXCEPTIONS'|'TEACHER_DUTY'|'DUTY_LOG'>('PERIODE');
   const load=async()=>{
     setLoading(true);setError('');
     try{
@@ -96,19 +98,21 @@ export const OperationalCalendarV319Admin:React.FC<{onBack:()=>void;onChanged?:(
   };
   return <div className="space-y-5 pb-10">
     <header className="flex flex-wrap items-start justify-between gap-4">
-      <div><button onClick={onBack} className="text-xs font-bold text-blue-700 flex items-center gap-1 mb-2"><ArrowLeft className="w-4 h-4"/> Kembali</button><h1 className="text-2xl font-black flex items-center gap-2"><CalendarRange className="w-7 h-7 text-teal-700"/> Kalender Operasional KBM</h1><p className="text-sm text-slate-500 mt-1">V3.19 RC2 — periode KBM, preview keterangan RPH, dan publikasi terkontrol ke Kalender Akademik.</p></div>
+      <div><button onClick={onBack} className="text-xs font-bold text-blue-700 flex items-center gap-1 mb-2"><ArrowLeft className="w-4 h-4"/> Kembali</button><h1 className="text-2xl font-black flex items-center gap-2"><CalendarRange className="w-7 h-7 text-teal-700"/> Kalender Operasional KBM</h1><p className="text-sm text-slate-500 mt-1">V3.19 RC4 — periode KBM, preview keterangan RPH, dan publikasi terkontrol ke Kalender Akademik.</p></div>
       <button disabled={loading||busy} onClick={()=>void load()} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold flex gap-2 items-center"><RefreshCw className="w-4 h-4"/> Refresh</button>
     </header>
-    <div className="rounded-xl border border-blue-200 bg-blue-50 text-blue-900 p-4 text-sm"><strong>Batas RC2:</strong> periode semester adalah metadata perencanaan, belum mengganti kalkulasi JP SQL V3.18. Pengecualian yang dipublish memakai Kalender Akademik lama sebagai satu-satunya sumber penonaktifan KBM. Penugasan dan libur pengganti sudah dapat disimpan di tab RC2 tetapi BELUM mengubah resolver/badal/analitik V3.18; tidak ada absensi aktual.</div>
+    <div className="rounded-xl border border-blue-200 bg-blue-50 text-blue-900 p-4 text-sm"><strong>Batas RC4:</strong> periode semester adalah metadata perencanaan, belum mengganti kalkulasi JP SQL V3.18. Pengecualian yang dipublish memakai Kalender Akademik lama sebagai satu-satunya sumber penonaktifan KBM. Penugasan RC2 sudah mengamankan rekomendasi badal melalui resolver RC3. Log RC4 menampilkan kewajiban tercatat, BUKAN presensi fisik atau metrik statistik final RC5.</div>
     {!loading&&!canManage&&<div className="rounded-xl p-4 bg-amber-50 text-amber-900 flex gap-2"><ShieldAlert/> Login WAKASEK/ADMIN Supabase diperlukan.</div>}
     {error&&<div role="alert" className="rounded-xl bg-red-50 text-red-800 p-4 text-sm font-bold">{error}</div>}
     {message&&<div role="status" className="rounded-xl bg-emerald-50 text-emerald-800 p-4 text-sm">{message}</div>}
     <div role="tablist" className="flex flex-wrap gap-2">
       <button role="tab" aria-selected={tab==='PERIODE'} onClick={()=>setTab('PERIODE')} className={`px-4 py-2 text-sm font-bold rounded-xl ${tab==='PERIODE'?'bg-slate-900 text-white':'bg-white border'}`}>Periode KBM</button>
       <button role="tab" aria-selected={tab==='EXCEPTIONS'} onClick={()=>setTab('EXCEPTIONS')} className={`px-4 py-2 text-sm font-bold rounded-xl ${tab==='EXCEPTIONS'?'bg-slate-900 text-white':'bg-white border'}`}>Pengecualian & Import RPH</button>
+      <button role="tab" aria-selected={tab==='DUTY_LOG'} onClick={()=>setTab('DUTY_LOG')} className={`px-4 py-2 text-sm font-bold rounded-xl ${tab==='DUTY_LOG'?'bg-slate-900 text-white':'bg-white border'}`}>Log Kewajiban Guru</button>
       <button role="tab" aria-selected={tab==='TEACHER_DUTY'} onClick={()=>setTab('TEACHER_DUTY')} className={`px-4 py-2 text-sm font-bold rounded-xl ${tab==='TEACHER_DUTY'?'bg-slate-900 text-white':'bg-white border'}`}>Penugasan Guru & Libur Pengganti</button>
     </div>
     {tab==='TEACHER_DUTY'&&<TeacherDutyV319Admin/>}
+    {tab==='DUTY_LOG'&&<TeacherDutyLogV319Panel teachers={teachers} schedules={schedules} incidentals={incidentals} calendar={calendar} logs={logs}/>}
     {tab==='PERIODE'&&<section className="rounded-2xl border bg-white p-5 space-y-4">
       <div><h2 className="text-lg font-black">Semester & Default KBM</h2><p className="text-xs text-slate-500 mt-1">Senin–Jumat merupakan baseline. Tanggal setelah akhir KBM tidak otomatis dianggap kosong oleh resolver V3.18 sampai integrasi RC berikutnya aktif.</p></div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

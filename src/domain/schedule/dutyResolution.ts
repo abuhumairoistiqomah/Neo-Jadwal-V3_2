@@ -6,6 +6,7 @@ import { checkIsITBA, isAlQuranOrTahsin, isITBACoreSubject } from '../teacher';
 /** V3.17.3: read-only duty projection. Neither master nor incidental data is mutated. */
 export type DutyTransfer = {
   teacherName: string;
+  coverageId?: string;
   kind: 'BADAL' | 'INCIDENTAL';
   className: string;
   subject: string;
@@ -65,7 +66,7 @@ export function collectPriorityDuties(args: {
     const currentSlot = effective.find(s => s.kelas && key(s.kelas) === key(log.kelas) && Number(s.jam_ke) === Number(log.jam_ke));
     // Do not revive coverage superseded by an explicit dated teacher-team replacement.
     if (currentSlot?.teacherTeamReplaced && !currentSlot.scheduledTeachers.some(n=>key(n) === key(log.guru_izin))) continue;
-    duties.push({teacherName: log.guru_pengganti, kind:'BADAL', className:log.kelas, subject:log.mapel,
+    duties.push({teacherName: log.guru_pengganti, coverageId:log.id, kind:'BADAL', className:log.kelas, subject:log.mapel,
       date, period:Number(log.jam_ke), start:currentSlot?.mulai, end:currentSlot?.selesai,
       sessionKey: currentSlot ? teachingSessionSignature(currentSlot) : `unmatched:${key(log.kelas)}:${log.jam_ke}:${key(log.mapel)}`});
   }

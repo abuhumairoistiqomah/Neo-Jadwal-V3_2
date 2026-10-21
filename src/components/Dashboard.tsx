@@ -9,6 +9,10 @@ import {
 } from "../types";
 import { JAM_TIME_MAP } from "../constants/schedule";
 import { teachingSessionSignature } from "../domain/schedule/teachingSession";
+import { activeMqTransferMatches, eligibleMqReceivingClasses, mqTransfersForRegularGroup, type MqTransferRecord } from "../domain/schedule/mqStudentTransfer";
+import { MqStudentTransferRepository } from "../infrastructure/repositories/mqStudentTransferRepository";
+import { findTeamTeachingTasksForTeacher, isAcknowledgedTeamTeachingCoverage } from "../domain/schedule/teamTeachingTask";
+import { findAbsentTeacherCoverage, absentCoverageLabel } from "../domain/schedule/absentTeacherCoverage";
 import { collectPriorityDuties, resolveDisplacedTeacher } from "../domain/schedule/dutyResolution";
 import { getTeacherUnavailableStatus } from "../domain/dashboardTeacherUnavailable";
 import type { SubstituteConstraint } from "../domain/substituteAvailability";
@@ -24,6 +28,17 @@ import { buildTaskRequestWhatsappMessage, findTeacherByName, whatsappDigits } fr
 import { T, useLanguage } from '../i18n/LanguageProvider';
 import { localeIntl } from '../i18n/translations';
 
+
+/** Wali/pendamping warnings must distinguish an acknowledged no-badal decision
+ * from a genuinely unassigned substitute. Do not invent a replacement name. */
+function SubstituteWarningSuffix({ log, assignedClass }: { log: LogIzinItem; assignedClass: string }) {
+  if (isAcknowledgedTeamTeachingCoverage(log)) return null;
+  const substituteName = log.guru_pengganti?.trim();
+  if (!substituteName) {
+    return <> <strong className="text-rose-700 font-extrabold">Badal belum ditentukan.</strong></>;
+  }
+  return <> Digantikan oleh <strong className={assignedClass}>{substituteName}</strong>.</>;
+}
 
 interface DashboardProps {
   teachers: Teacher[];
@@ -57,6 +72,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
   setPage,
 }) => {
   const {t, language}=useLanguage();
+  const [mqTransfers, setMqTransfers] = useState<MqTransferRecord[]>([]);
+  const [mqTransfersError, setMqTransfersError] = useState("");
+  const [mqTransfersBusy, setMqTransfersBusy] = useState(false);
+  const [mqTargetSelection, setMqTargetSelection] = useState<Record<string,string>>({});
+  const [mqRefreshKey, setMqRefreshKey] = useState(0);
+  const mqTransferRepository = useMemo(() => new MqStudentTransferRepository(), []);
   const [selectedDay, setSelectedDay] = useState<"Senin" | "Selasa" | "Rabu" | "Kamis" | "Jumat">("Senin");
   const [dashboardType, setDashboardType] = useState<"guru" | "wali-kelas">("guru");
   const [showNotifications, setShowNotifications] = useState<boolean>(true);
@@ -70,6 +91,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     mapel: string;
     guru_izin: string;
     tugas: string;
+    taskLabel?: string;
   } | null>(null);
 
 
@@ -110,6 +132,34 @@ export const Dashboard: React.FC<DashboardProps> = ({
     const day = String(d.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    setMqTransfers([]);
+    setMqTransfersError("");
+    if (!selectedDate || !selectedTeacher) return;
+    void mqTransferRepository.list(selectedDate).then(rows => {
+      if (!cancelled) setMqTransfers(rows);
+    }).catch((reason: unknown) => {
+      if (!cancelled) setMqTransfersError(reason instanceof Error ? reason.message : String(reason));
+    });
+    return () => { cancelled = true; };
+  }, [mqTransferRepository, selectedDate, selectedTeacher, mqRefreshKey]);
+
+  const confirmMqTransfer = async (coverageId: string, receivingClass: string) => {
+    if (!receivingClass || !window.confirm(`Konfirmasi pelimpahan siswa ke ${receivingClass}?\n\nHanya untuk kelas MQ dengan mapel dan JP yang cocok. Keputusan ini akan tercatat dan bisa dibatalkan.`)) return;
+    setMqTransfersBusy(true); setMqTransfersError("");
+    try { await mqTransferRepository.confirm(coverageId, receivingClass); setMqRefreshKey(n => n + 1); }
+    catch (error) { setMqTransfersError(error instanceof Error ? error.message : String(error)); }
+    finally { setMqTransfersBusy(false); }
+  };
+  const revokeMqTransfer = async (id: string) => {
+    if (!window.confirm("Batalkan konfirmasi pelimpahan MQ? Warning asli akan muncul kembali bila masih bentrok.")) return;
+    setMqTransfersBusy(true); setMqTransfersError("");
+    try { await mqTransferRepository.revoke(id); setMqRefreshKey(n => n + 1); }
+    catch (error) { setMqTransfersError(error instanceof Error ? error.message : String(error)); }
+    finally { setMqTransfersBusy(false); }
+  };
 
   // Automatically sync selectedDay when selectedDate changes
   useEffect(() => {
@@ -344,7 +394,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 replacingWho: origTeacher
               });
             }
-          } else {
+          } else if (!isAcknowledgedTeamTeachingCoverage(matchingLog)) {
             hasMissingReplacement = true;
           }
         } else {
@@ -379,7 +429,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 replacingWho: log.guru_izin.trim()
               });
             }
-          } else {
+          } else if (!isAcknowledgedTeamTeachingCoverage(log)) {
             hasMissingReplacement = true;
           }
         }
@@ -553,6 +603,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         tipe_insidental: schedulesInSession.map((item) => item.tipe_insidental || "").filter(Boolean).join(" + "),
         isOverridden: false,
         kelasgabung: logsInSession.length > 1 || explicitCombined ? "Iya" : (firstSched?.kelasgabung || "Tidak"),
+        coverageIds: logsInSession.map(log => log.id),
         isConflict: false,
         isInval: true,
         guru_izin: firstLog.guru_izin,
@@ -564,15 +615,29 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }).sort((a, b) => a.jam_ke - b.jam_ke || a.kelas.localeCompare(b.kelas, "id-ID", { numeric: true, sensitivity: "base" }));
   }, [activeInvalLogs, processedMasterSchedulesForDay]);
 
+  // An MQ merge is NEVER inferred from same JP/subject alone. It must have
+  // a persisted admin acknowledgement for the exact coverage and receiving class.
+  const confirmedMqTransfers = useMemo(() => activeMqTransferMatches({
+    records: mqTransfers, logs, teacherName: selectedTeacher, date: selectedDate,
+    regular: groupedSchedules, badalGroups: invalSchedules,
+  }), [mqTransfers, logs, selectedTeacher, selectedDate, groupedSchedules, invalSchedules]);
+
   // Merge regular schedules and inval schedules with conflict handling (Inval vs Reguler, Kalender Akademik)
   const mergedAllSchedules = useMemo(() => {
-    const invalJamSet = new Set(invalSchedules.map(inv => inv.jam_ke));
+    const delegatedCoverage = new Set(confirmedMqTransfers.map(record => record.coverage_slot_id));
+    const invalJamSet = new Set(invalSchedules.filter(inv =>
+      inv.coverageIds.some(id => !delegatedCoverage.has(id))).map(inv => inv.jam_ke));
 
     const regularWithConflictFlags = groupedSchedules.map(reg => {
       const hasInvalConflict = invalJamSet.has(reg.jam_ke);
+      // RC4.4.5: same receiving class on JP1-4 is NOT a JP5 delegation.
+      const merges = mqTransfersForRegularGroup(confirmedMqTransfers, reg);
+      const delegatedHere = new Set(merges.map(record => record.coverage_slot_id));
+      const activePriorities = priorityDutiesForDay.filter(duty =>
+        duty.kind !== 'BADAL' || !duty.coverageId || !delegatedHere.has(duty.coverageId));
       const displacementStatuses = reg.items.map((slot) => resolveDisplacedTeacher({
         original: slot, teacherName: selectedTeacher, teacher: currentTeacherObj,
-        priorityDuties: priorityDutiesForDay,
+        priorityDuties: activePriorities,
       }));
       const transferredAssistant = displacementStatuses.length > 0 && displacementStatuses.every(
         status => status?.kind === 'TRANSFERRED_ASSISTANT');
@@ -585,6 +650,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
         || null;
       return {
         ...reg,
+        coverageIds: [] as string[],
+        mqMerges: merges,
+        kelas: merges.length ? [...new Set([...reg.kelas.split(',').map(k => k.trim()), ...merges.map(m => m.source_class_name)])].join(', ') : reg.kelas,
         teacherUnavailable: getTeacherUnavailableStatus({
           teacherId: currentTeacherObj?.id,
           teacherName: selectedTeacher,
@@ -602,10 +670,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
       };
     });
 
-    const invalWithFlags = invalSchedules.map(inv => {
+    const invalWithFlags = invalSchedules.filter(inv =>
+      !inv.coverageIds.length || inv.coverageIds.some(id => !delegatedCoverage.has(id))
+    ).map(inv => {
       const calEvent = getAcademicCalendarEvent(selectedDate, inv.kelas, inv.jam_ke, kalenderAkademik);
       return {
         ...inv,
+        mqMerges: [] as MqTransferRecord[],
         teacherUnavailable: getTeacherUnavailableStatus({
           teacherId: currentTeacherObj?.id,
           teacherName: selectedTeacher,
@@ -634,7 +705,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       }
       return 0;
     });
-  }, [groupedSchedules, invalSchedules, selectedDate, kalenderAkademik, currentTeacherObj, selectedTeacher, substituteConstraints, logs, priorityDutiesForDay]);
+  }, [groupedSchedules, invalSchedules, confirmedMqTransfers, selectedDate, kalenderAkademik, currentTeacherObj, selectedTeacher, substituteConstraints, logs, priorityDutiesForDay]);
 
   // Extract Wali kelas class name
   const waliClass = useMemo(() => {
@@ -912,7 +983,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     {waliLogsToday.map((log) => (
                       <div key={log.id} className="flex items-start gap-2 bg-amber-50/80 p-2.5 rounded-lg border border-amber-100">
                         <span className="leading-relaxed">
-                          🔔 Kelas <strong>{log.kelas}</strong> (Jam ke-{log.jam_ke} - <em>{log.mapel}</em>): Guru utama <strong>{log.guru_izin}</strong> izin. Digantikan oleh <strong className="text-amber-950 underline decoration-amber-400 font-extrabold">{log.guru_pengganti || "Belum Ditentukan"}</strong>.
+                          🔔 Kelas <strong>{log.kelas}</strong> (Jam ke-{log.jam_ke} - <em>{log.mapel}</em>): Guru utama <strong>{log.guru_izin}</strong> izin.<SubstituteWarningSuffix log={log} assignedClass="text-amber-950 underline decoration-amber-400 font-extrabold" />
                         </span>
                       </div>
                     ))}
@@ -931,7 +1002,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     {pendampingLogsToday.map((log) => (
                       <div key={log.id} className="flex items-start gap-2 bg-indigo-50/80 p-2.5 rounded-lg border border-indigo-100">
                         <span className="leading-relaxed">
-                          🔔 Kelas <strong>{log.kelas}</strong> (Jam ke-{log.jam_ke} - <em>{log.mapel}</em>): Guru utama <strong>{log.guru_izin}</strong> izin. Digantikan oleh <strong className="text-indigo-950 underline decoration-indigo-400 font-extrabold">{log.guru_pengganti || "Belum Ditentukan"}</strong>.
+                          🔔 Kelas <strong>{log.kelas}</strong> (Jam ke-{log.jam_ke} - <em>{log.mapel}</em>): Guru utama <strong>{log.guru_izin}</strong> izin.<SubstituteWarningSuffix log={log} assignedClass="text-indigo-950 underline decoration-indigo-400 font-extrabold" />
                         </span>
                       </div>
                     ))}
@@ -1032,6 +1103,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </div>
               </div>
 
+              {mqTransfersError && <div role="alert" className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                Pelimpahan MQ belum dapat diverifikasi: {mqTransfersError}. Warning konflik tetap ditampilkan sampai data berhasil diverifikasi.
+              </div>}
               {/* Schedule List */}
               {mergedAllSchedules.length > 0 ? (
                 <div className="relative border-l border-blue-100 pl-6 ml-3 space-y-6">
@@ -1182,6 +1256,30 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               </p>
                             )}
 
+                            {/* RC4.4.4: Keep the actual badal decision visible to the teacher who is absent.
+                                Match the original teacher and effective class/JP, never just a shared JP. */}
+                            {item.teacherUnavailable.unavailable && !item.isInval &&
+                              !item.isCancelledForKalender && (() => {
+                                const coverage = findAbsentTeacherCoverage({
+                                  date: selectedDate,
+                                  period: Number(item.jam_ke),
+                                  teacherName: selectedTeacher,
+                                  classes: item.items,
+                                  logs,
+                                });
+                                if (!coverage.length) return null;
+                                return (
+                                  <div className="mt-2 flex flex-wrap gap-2" aria-label="Informasi guru pengganti">
+                                    {coverage.map(log => (
+                                      <div key={log.id} className="text-xs font-semibold rounded-lg border border-rose-200 bg-white/90 px-3 py-2 text-rose-950">
+                                        <span className="font-extrabold">{log.kelas} • JP {log.jam_ke}:</span>{" "}
+                                        <span>{absentCoverageLabel(log)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
+
                             {/* Cancelled Banner if conflict with Inval */}
                             {item.isCancelledForInval && (
                               <p className="text-xs font-bold text-red-700 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg mt-1 w-fit shadow-2xs flex items-center gap-1.5">
@@ -1197,11 +1295,73 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                 {' '}{item.transferDestination.subject} di {item.transferDestination.className} (JP{item.transferDestination.period}).
                               </p>
                             )}
+                            {!item.isInval && item.mqMerges.length > 0 && (
+                              <div className="mt-2 p-3 rounded-lg border border-emerald-300 bg-emerald-50 text-xs text-emerald-900 space-y-2">
+                                <p className="font-extrabold">👥 Pelimpahan siswa MQ • kelas gabungan terkonfirmasi</p>
+                                {item.mqMerges.map(merge => <div key={merge.id} className="flex flex-wrap gap-2 items-center justify-between">
+                                  <span>{merge.source_class_name} → {merge.receiving_class_name} (JP {merge.period})</span>
+                                  {isAdmin && <button type="button" disabled={mqTransfersBusy} onClick={() => void revokeMqTransfer(merge.id)}
+                                    className="underline font-bold text-rose-700 disabled:opacity-50">Batalkan penggabungan</button>}
+                                </div>)}
+                              </div>
+                            )}
+                            {item.isInval && isAdmin && item.coverageIds.length === 1 && (() => {
+                              const targets = eligibleMqReceivingClasses(item, groupedSchedules, selectedTeacher);
+                              if (!targets.length) return null;
+                              const coverageId = item.coverageIds[0];
+                              const target = mqTargetSelection[coverageId] && targets.includes(mqTargetSelection[coverageId])
+                                ? mqTargetSelection[coverageId] : targets[0];
+                              return <div className="mt-2 p-3 rounded-lg border border-indigo-200 bg-indigo-50 space-y-2 text-xs">
+                                <p className="font-bold text-indigo-900">Pelimpahan siswa MQ ke kelas yang sedang diajar (bukan tugas kedua)</p>
+                                <div className="flex flex-wrap gap-2 items-center">
+                                  <select aria-label="Kelas penerima pelimpahan MQ" value={target}
+                                    onChange={event => setMqTargetSelection(prev => ({...prev,[coverageId]:event.target.value}))}
+                                    className="rounded-lg border border-indigo-300 p-2 bg-white text-slate-900">
+                                    {targets.map(className => <option key={className} value={className}>{className}</option>)}
+                                  </select>
+                                  <button type="button" disabled={mqTransfersBusy || Boolean(mqTransfersError)}
+                                    onClick={() => void confirmMqTransfer(coverageId,target)}
+                                    className="rounded-lg bg-indigo-700 px-3 py-2 text-white font-bold disabled:opacity-50">Konfirmasi gabung</button>
+                                </div>
+                                <p className="text-indigo-700">Hanya berlaku untuk tanggal, JP, mapel, dan guru yang diverifikasi. Tidak menghapus badal atau mengubah master.</p>
+                              </div>;
+                            })()}
                             {item.dutyConflict && !item.isInval && (
                               <p className="text-xs font-bold text-red-800 bg-red-50 border border-red-300 px-3 py-2 rounded-lg mt-1 w-fit" role="alert">
                                 Konflik penugasan! Guru pengampu atau beberapa tugas prioritas beririsan. Perlu tindak lanjut manajemen.
                               </p>
                             )}
+
+                            {/* RC4.4: existing task/material view for remaining team teachers.
+                                NO_SUBSTITUTE does not create an extra badal JP. */}
+                            {!item.isInval && !item.isCancelledForKalender && !item.isCancelledForInval &&
+                              !item.teacherUnavailable.unavailable && !item.dutyConflict &&
+                              findTeamTeachingTasksForTeacher({
+                                date: selectedDate,
+                                period: Number(item.jam_ke),
+                                teacherName: selectedTeacher,
+                                effectiveClasses: item.items,
+                                coverageLogs: logs,
+                              }).map(coverage => (
+                                <div key={`team-task-${coverage.id}`} className="mt-2 p-3 rounded-xl border border-emerald-300 bg-emerald-50/90 text-emerald-950 space-y-2">
+                                  <p className="text-xs font-extrabold">👥 Ditangani Team Teaching — {coverage.kelas} • JP {coverage.jam_ke}</p>
+                                  <p className="text-[11px]">{coverage.guru_izin} tidak mengajar pada JP ini. Tidak diperlukan badal tambahan.</p>
+                                  {coverage.tugas?.trim() ? (
+                                    <button type="button" onClick={() => setTaskModalData({
+                                      isOpen: true, kelas: coverage.kelas,
+                                      mapel: coverage.mapel || item.mapel,
+                                      guru_izin: coverage.guru_izin,
+                                      taskLabel: "Instruksi / tugas untuk team teaching",
+                                      tugas: coverage.tugas || "",
+                                    })}
+                                      className="px-3 py-2 rounded-lg text-xs font-bold border border-emerald-300 bg-white hover:bg-emerald-100 text-emerald-900">
+                                      📋 Lihat Kegiatan Siswa / Tugas
+                                    </button>
+                                  ) : (
+                                    <p className="text-xs font-semibold text-amber-800">⚠ Tugas belum tercatat. Hubungi guru pengampu/manajemen untuk instruksi.</p>
+                                  )}
+                                </div>
+                              ))}
 
                             {/* Inval Info Banner */}
                             {item.isInval && (
@@ -1557,7 +1717,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             )}
                             {period.hasIzin && !period.hasMissingReplacement && !period.isAcademicEvent && (
                               <span className="text-xs font-bold px-2.5 py-1 rounded-md bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 shadow-2xs">
-                                🚨 Guru Pengganti
+                                {period.periodLogs.every(isAcknowledgedTeamTeachingCoverage)
+                                  ? "👥 Ditangani Team Teaching" : "🚨 Guru Pengganti"}
                               </span>
                             )}
                             {period.hasMissingReplacement && !period.isAcademicEvent && (
@@ -1692,6 +1853,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                         <div className="text-amber-950 font-medium">
                                           👉 Digantikan oleh: <strong className="text-amber-950 font-bold bg-amber-200/70 px-1.5 py-0.5 rounded">{matchingLog.guru_pengganti}</strong>
                                         </div>
+                                      ) : matchingLog && isAcknowledgedTeamTeachingCoverage(matchingLog) ? (
+                                        <div className="text-emerald-800 font-bold flex items-center gap-1">
+                                          👥 Ditangani team teaching yang tersedia (tanpa badal tambahan)
+                                        </div>
                                       ) : (
                                         <div className="text-rose-700 font-bold flex items-center gap-1">
                                           ⚠️ Guru pengganti belum ditentukan
@@ -1707,6 +1872,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                           kelas: matchingLog.kelas || selectedClass,
                                           mapel: period.mapel,
                                           guru_izin: matchingLog.guru_izin,
+                                          taskLabel: matchingLog.coverage_status === "NO_SUBSTITUTE" ? "Instruksi / tugas untuk team teaching" : undefined,
                                           tugas: matchingLog.tugas
                                         })}
                                         className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 shadow-xs shrink-0 cursor-pointer text-xs"
@@ -2032,7 +2198,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </button>
             </div>
             <div className="p-5 max-h-[60vh] overflow-y-auto">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Pesan dari {taskModalData.guru_izin}:</p>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{taskModalData.taskLabel || `Pesan dari ${taskModalData.guru_izin}:`}</p>
               <div className="bg-blue-50/50 border border-blue-100 p-4 rounded-xl text-sm text-slate-700 leading-relaxed">
                 {renderTaskWithLinks(taskModalData.tugas)}
               </div>

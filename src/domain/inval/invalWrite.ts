@@ -1,4 +1,5 @@
 import type { LogIzinItem, Teacher } from "../models";
+import { TEAM_TEACHING_NO_BADAL } from "../officialDutyBadal";
 import {
   resolveSubstituteAvailability,
   type SubstituteConstraint,
@@ -37,7 +38,8 @@ export interface InvalWriteRow {
   period: number;
   subject: string;
   absent_teacher_id: string;
-  substitute_teacher_id: string;
+  substitute_teacher_id: string | null;
+  coverage_decision?: "NO_SUBSTITUTE";
   reason: string;
   task_text: string;
   task_resources: InvalTaskResourceInput[];
@@ -89,40 +91,45 @@ export function buildInvalWriteBundle(input: {
 
   const rows: InvalWriteRow[] = input.logs.map((log, index) => {
     const absent = teacherByName(input.teachers, log.guru_izin);
-    const substitute = teacherByName(input.teachers, log.guru_pengganti);
+    const noAdditionalSubstitute = log.guru_pengganti === TEAM_TEACHING_NO_BADAL;
+    const substitute = noAdditionalSubstitute ? undefined : teacherByName(input.teachers, log.guru_pengganti);
 
     if (!absent?.id) {
       throw new Error(`Guru izin '${log.guru_izin}' tidak memiliki UUID Supabase.`);
     }
-    if (!substitute?.id) {
+    if (!noAdditionalSubstitute && !substitute?.id) {
       throw new Error(`Guru pengganti '${log.guru_pengganti}' tidak memiliki UUID Supabase.`);
     }
 
-    const availability = resolveSubstituteAvailability({
-      teacherId: substitute.id,
+    if (noAdditionalSubstitute && Number(log.jam_ke) === 0) {
+      throw new Error("Keputusan team teaching tidak tersedia untuk JP0.");
+    }
+
+    const availability = noAdditionalSubstitute ? null : resolveSubstituteAvailability({
+      teacherId: substitute!.id,
       date: log.tanggal,
       period: Number(log.jam_ke),
       constraints: input.constraints,
     });
 
-    if (availability.status === "HARD_BLOCKED") {
-      const reasons = availability.matchingConstraints.map((item) => item.reason).join("; ");
-      throw new Error(`Guru '${substitute.nama}' memiliki pembatasan badal non-override${reasons ? `: ${reasons}` : ""}.`);
+    if (availability?.status === "HARD_BLOCKED") {
+      const reasons = availability!.matchingConstraints.map((item) => item.reason).join("; ");
+      throw new Error(`Guru '${substitute!.nama}' memiliki pembatasan badal non-override${reasons ? `: ${reasons}` : ""}.`);
     }
 
     const acknowledged = new Set((overrideLists[index] ?? []).map(String));
-    const required = availability.matchingConstraints
+    const required = availability?.matchingConstraints
       .filter((constraint) => constraint.overrideAllowed)
-      .map((constraint) => constraint.id);
+      .map((constraint) => constraint.id) ?? [];
 
     const missing = required.filter((constraintId) => !acknowledged.has(constraintId));
     if (missing.length > 0) {
-      const reasons = availability.matchingConstraints
+      const reasons = availability!.matchingConstraints
         .filter((constraint) => missing.includes(constraint.id))
         .map((constraint) => constraint.reason)
         .join("; ");
       throw new Error(
-        `Override pembatasan badal untuk '${substitute.nama}' belum dikonfirmasi${reasons ? `: ${reasons}` : ""}.`,
+        `Override pembatasan badal untuk '${substitute!.nama}' belum dikonfirmasi${reasons ? `: ${reasons}` : ""}.`,
       );
     }
 
@@ -132,7 +139,8 @@ export function buildInvalWriteBundle(input: {
       period: Number(log.jam_ke),
       subject: String(log.mapel || "").trim(),
       absent_teacher_id: absent.id,
-      substitute_teacher_id: substitute.id,
+      substitute_teacher_id: noAdditionalSubstitute ? null : substitute!.id,
+      ...(noAdditionalSubstitute ? { coverage_decision: "NO_SUBSTITUTE" as const } : {}),
       reason: String(log.alasan || "").trim(),
       task_text: String(log.tugas || "").trim(),
       task_resources: (input.metadata?.taskResourcesByRow?.[index] ?? []).map((resource) => ({ ...resource })),

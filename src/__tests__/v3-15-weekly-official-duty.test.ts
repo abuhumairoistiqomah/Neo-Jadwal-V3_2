@@ -89,3 +89,15 @@ test("V3.15.1 Kebutuhan Badal is discoverable but disabled until normal-teaching
   assert.match(source, /Aktifkan 'Guru juga tidak bisa mengajar jadwal normal' terlebih dahulu/);
   assert.match(source, /aria-describedby="requires-badal-help"/);
 });
+
+test("RC4.1: a team-teaching NO_SUBSTITUTE resolution is complete without inventing a teacher", () => {
+  const need = {date:"2026-10-21",period:2,className:"08 AE 2 I",subject:"Al-Qur'an"};
+  const classes = new Map([["08 ae 2 i","class-id"]]);
+  const acknowledged = {
+    id:"team-cov",schedule_date:"2026-10-21",period:2,class_id:"class-id",
+    class_name_snapshot:"08 AE 2 I",substitute_teacher_id:null,
+    substitute_teacher_name_snapshot:null,status:"NO_SUBSTITUTE",
+  };
+  assert.deepEqual(summarizeOfficialDutyCoverage([need],[acknowledged],classes),{total:1,assigned:1,pending:0});
+  assert.deepEqual(summarizeOfficialDutyCoverage([need],[{...acknowledged,status:"WAITING"}],classes),{total:1,assigned:0,pending:1});
+});

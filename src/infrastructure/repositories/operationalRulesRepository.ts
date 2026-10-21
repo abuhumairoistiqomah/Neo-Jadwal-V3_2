@@ -146,12 +146,13 @@ export class OperationalRulesRepository {
     return (data || []) as OperationalClassRow[];
   }
 
-  async listSubstituteConstraints(): Promise<SubstituteConstraintAdminRow[]> {
+  async listSubstituteConstraints(includeDeleted = false): Promise<SubstituteConstraintAdminRow[]> {
     const client = requireSupabaseClient();
-    const { data, error } = await client
+    let query = client
       .from("substitute_constraints")
-      .select("*")
-      .is("deleted_at", null)
+      .select("*");
+    if (!includeDeleted) query = query.is("deleted_at", null);
+    const { data, error } = await query
       .order("is_active", { ascending: false })
       .order("specific_date", { ascending: true, nullsFirst: false })
       .order("teacher_id");
@@ -217,13 +218,22 @@ export class OperationalRulesRepository {
     if (error) throw error;
   }
 
-  async setSubstituteConstraintActive(id: string, active: boolean): Promise<void> {
-    const client = requireSupabaseClient();
-    const { error } = await client
-      .from("substitute_constraints")
-      .update({ is_active: active, deleted_at: null })
-      .eq("id", id);
-    if (error) throw error;
+  /** One server-side transaction revokes the rule and its OWN OFFICIAL_DUTY coverage. */
+  async changeSubstituteConstraint(
+    id: string,
+    action: "DEACTIVATE" | "ACTIVATE" | "SOFT_DELETE" | "RESTORE",
+    note = "",
+  ): Promise<{ coverage_hidden: number; tasks_hidden: number }> {
+    const { data, error } = await requireSupabaseClient().rpc("ejadwal_change_substitute_constraint_v319", {
+      p_constraint_id: id,
+      p_action: action,
+      p_note: note.trim(),
+    });
+    if (error) throw new Error(`Gagal memperbarui restriksi dan badal terkait: ${error.message}`);
+    return {
+      coverage_hidden: Number(data?.coverage_hidden || 0),
+      tasks_hidden: Number(data?.tasks_hidden || 0),
+    };
   }
 
   async listAcademicEventGroups(): Promise<AcademicEventGroup[]> {

@@ -5,6 +5,7 @@ import { getSchoolTodayISO } from '../domain/date';
 import { buildIndividualTeacherStatistics, type IndividualLeaveProfile, type PatternMode, type LeaveReasonCategory } from '../domain/teacherIndividualStatistics';
 import { TeacherIndividualStatisticsRepository } from '../infrastructure/repositories/teacherIndividualStatisticsRepository';
 import { SearchableSelect } from './ui/SearchableSelect';
+import { TeacherV319OperationalSummary } from './TeacherV319OperationalSummary';
 
 import { T } from '../i18n/LanguageProvider';
 
@@ -171,7 +172,8 @@ export const TeacherIndividualStatistics:React.FC<Props> = ({teachers,schedules,
       {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{error}</p>}
     </section>
     {!teacherId && <p className="rounded-xl bg-slate-100 p-5 text-sm text-slate-500">Pilih satu guru untuk melihat statistiknya.</p>}
-    {stats && profile && <>
+    {stats && profile && teacher && <>
+      <TeacherV319OperationalSummary teacher={teacher} profile={profile} schedules={schedules} incidentals={incidentals} calendar={academicEvents} logs={logs}/>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Metric label="JP izin mengajar" value={`${stats.recordedTeachingLeaveJp} JP`} description="Hanya JP1–JP6 yang ditinggalkan; tidak menghitung JP0/Free."/>
         <Metric label="Total JP ketidakhadiran" value={`${stats.totalLeaveJp} JP`} description={`${stats.recordedTeachingLeaveJp} mengajar + ${stats.homeroomLeaveJp} JP0 + ${stats.freeLeaveJp} Free.`}/>

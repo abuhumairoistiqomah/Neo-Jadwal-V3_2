@@ -78,6 +78,8 @@ export interface LogIzinItem {
   guru_pengganti: string; // Name of replacement
   /** Persistence source; required to distinguish audited legacy amendments. */
   source?: string;
+  /** Operational coverage state; null-substitute is not the same as WAITING. */
+  coverage_status?: string;
   /** Selected substitute UUID when loaded from Supabase. */
   substitute_teacher_id?: string | null;
   /** Dated public contact: populated only for active current/future coverage. */

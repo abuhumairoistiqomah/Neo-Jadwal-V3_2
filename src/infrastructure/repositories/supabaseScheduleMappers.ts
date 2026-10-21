@@ -81,6 +81,7 @@ export interface ScheduleIncidentalRow {
   override_is_combined?: boolean | null;
   override_class_mode?: ScheduleClassMode | null;
   override_special_note?: string | null;
+  updated_at?: string | null;
   reason?: string | null;
   incidental_type?: string | null;
   deleted_at?: string | null;
@@ -377,8 +378,17 @@ export function mapCoverageRows(
   teachers: TeacherRow[],
   learningTasks: LearningTaskRow[] = [],
   taskResources: TaskResourceRow[] = [],
+  scheduleMaster: ScheduleMasterRow[] = [],
+  scheduleIncidentals: ScheduleIncidentalRow[] = [],
 ): LogIzinItem[] {
   const classById = new Map(classes.map((row) => [row.id, row]));
+  const classIdByName = new Map<string, string>();
+  for (const entry of classes) {
+    for (const label of [entry.code, entry.display_name]) {
+      const normalized = String(label || "").trim().toLocaleLowerCase("id-ID");
+      if (normalized) classIdByName.set(normalized, entry.id);
+    }
+  }
   const resolveTeacherName = buildTeacherNameResolver(teachers);
   const tasksByCoverage = new Map<string, LearningTaskRow[]>();
   const resourcesByTask = new Map<string, TaskResourceRow[]>();
@@ -407,6 +417,40 @@ export function mapCoverageRows(
     return parts.join("\n").trim();
   };
 
+  // RC4.2: fill missing legacy/official-duty subject snapshots from the exact
+  // dated class + JP. Dated incidental override wins; fallback to that weekday's
+  // master schedule. Never infer subject from the substitute teacher's specialty.
+  const subjectByMaster = new Map<string, string>();
+  for (const master of scheduleMaster) {
+    if (master.is_active === false || master.deleted_at) continue;
+    const key = `${master.class_id}|${master.day_of_week}|${master.period}`;
+    if (!subjectByMaster.has(key) && String(master.subject || "").trim()) subjectByMaster.set(key, String(master.subject).trim());
+  }
+  const datedSubject = new Map<string, { subject: string; order: string }>();
+  for (const inc of scheduleIncidentals) {
+    if (inc.deleted_at) continue;
+    const key = `${inc.schedule_date}|${inc.class_id}|${inc.period}`;
+    const order = `${inc.updated_at || ""}|${inc.id}`;
+    const previous = datedSubject.get(key);
+    // The latest dated override wins, even when it intentionally inherits
+    // the master subject; never resurrect an older incidental override.
+    if (!previous || order >= previous.order) {
+      datedSubject.set(key, { subject: String(inc.override_subject || "").trim(), order });
+    }
+  }
+  const resolveSubject = (row: CoverageSlotRow): string => {
+    const snapshot = String(row.subject_snapshot || "").trim();
+    if (snapshot) return snapshot;
+    // Older coverage may have only a class-name snapshot. Resolve it by an
+    // exact class match; never guess based on grade or the substitute teacher.
+    const classId = row.class_id || classIdByName.get(String(row.class_name_snapshot || "").trim().toLocaleLowerCase("id-ID"));
+    if (!classId) return "";
+    const dated = datedSubject.get(`${row.schedule_date}|${classId}|${row.period}`)?.subject;
+    if (dated) return dated;
+    const weekday = new Date(`${row.schedule_date}T12:00:00Z`).getUTCDay();
+    return subjectByMaster.get(`${classId}|${weekday === 0 ? 7 : weekday}|${row.period}`) || "";
+  };
+
   return rows.map((row) => ({
     id: row.id,
     tanggal: row.schedule_date,
@@ -416,12 +460,13 @@ export function mapCoverageRows(
     kelas: row.class_id
       ? classById.get(row.class_id)?.display_name || row.class_name_snapshot || ""
       : row.class_name_snapshot || "",
-    mapel: row.subject_snapshot || "",
+    mapel: resolveSubject(row),
     guru_pengganti: resolveTeacherName(
       row.substitute_teacher_id,
       row.substitute_teacher_name_snapshot,
     ),
     source: row.source || undefined,
+    coverage_status: row.status || undefined,
     substitute_teacher_id: row.substitute_teacher_id || null,
     whatsapp_guru_izin: row.absent_teacher_whatsapp_e164 || null,
     whatsapp_guru_pengganti: row.substitute_teacher_whatsapp_e164 || null,
@@ -445,6 +490,8 @@ export function mapRelationalScheduleRows(rows: RelationalScheduleRows): Schedul
       rows.teachers,
       rows.learningTasks || [],
       rows.taskResources || [],
+      rows.scheduleMaster,
+      rows.scheduleIncidentals,
     ),
     jadwalInsidental: mapIncidentalRows({
       scheduleIncidentals: rows.scheduleIncidentals,

@@ -1063,6 +1063,11 @@ export default function App() {
             {activePage === "operational-calendar" && (
               isAdmin ? (
                 <OperationalCalendarV319Admin
+                  teachers={teachers}
+                  schedules={schedules}
+                  incidentals={jadwalInsidental}
+                  calendar={kalenderAkademik}
+                  logs={logs}
                   onChanged={async () => { await refreshFromSupabase(); }}
                   onBack={() => setActivePage("dashboard")}
                 />

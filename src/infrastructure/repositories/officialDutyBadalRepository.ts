@@ -1,5 +1,6 @@
 import { requireSupabaseClient } from "../supabase/client";
 import type { OfficialDutyAssignment } from "../../domain/officialDutyBadal";
+import type { InvalTaskResourceInput } from "../../domain/inval/invalWrite";
 
 export class OfficialDutyBadalRepository {
   async listAssignments(constraintId: string, date: string): Promise<OfficialDutyAssignment[]> {
@@ -28,6 +29,31 @@ export class OfficialDutyBadalRepository {
       if ((data || []).length < 1000) return collected;
     }
     throw new Error("Jumlah coverage terlalu besar untuk diperiksa. Status Badal Aman belum dapat dipastikan.");
+  }
+
+  async reopenTeamTeaching(coverageId: string): Promise<void> {
+    const { error } = await requireSupabaseClient().rpc("ejadwal_reopen_official_duty_team_teaching_v319", {
+      p_coverage_id: coverageId,
+    });
+    if (error) throw new Error(`Gagal membuka kembali kebutuhan badal: ${error.message}`);
+  }
+
+  /** Records explicit team-teaching coverage, never a fabricated substitute teacher. */
+  async acknowledgeTeamTeaching(input: { constraintId: string; date: string; period: number; classId: string; taskText?: string; taskResources?: InvalTaskResourceInput[] }): Promise<void> {
+    const { error } = await requireSupabaseClient().rpc("ejadwal_acknowledge_official_duty_team_teaching_task_v319", {
+      p_constraint_id: input.constraintId,
+      p_date: input.date,
+      p_period: input.period,
+      p_class_id: input.classId,
+      p_task_text: input.taskText || "",
+      p_task_resources: input.taskResources || [],
+    });
+    if (error) {
+      if (error.message.includes("TEAM_TEACHING_NOT_AVAILABLE")) {
+        throw new Error("Tidak ada guru team teaching yang tercatat tersedia pada kelas/JP tersebut. Pilih guru badal lain atau periksa jadwal dan izin tim terlebih dahulu.");
+      }
+      throw new Error(`Gagal mencatat penanganan team teaching: ${error.message}`);
+    }
   }
 
   async assign(input: { constraintId: string; date: string; period: number; classId: string; substituteTeacherId: string }): Promise<void> {

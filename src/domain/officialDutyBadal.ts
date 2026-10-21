@@ -3,6 +3,9 @@ import { splitHomeroomClasses } from "./leaveRequest";
 import { getAcademicCalendarEvent } from "./calendar";
 import { buildEffectiveScheduleForDate } from "./schedule/effectiveSchedule";
 
+/** UI-only command. Never store this value as a teacher identity. */
+export const TEAM_TEACHING_NO_BADAL = "__TEAM_TEACHING_NO_BADAL__";
+
 export interface OfficialDutyRule {
   teacher_id: string;
   constraint_type: "DATE" | "WEEKLY";
@@ -82,7 +85,9 @@ export function findOfficialDutyNeeds(input: {
 
 export function summarizeOfficialDutyCoverage(needs: OfficialDutyNeed[], assignments: OfficialDutyAssignment[],
   classIdByName: ReadonlyMap<string,string>): { total: number; assigned: number; pending: number } {
-  const filled = new Set(assignments.filter((a) => a.substitute_teacher_id && ["ASSIGNED", "COMPLETED"].includes(a.status))
+  const filled = new Set(assignments.filter((a) =>
+    (a.substitute_teacher_id && ["ASSIGNED", "COMPLETED"].includes(a.status))
+    || (a.status === "NO_SUBSTITUTE" && !a.substitute_teacher_id))
     .map((a) => `${a.schedule_date}|${a.period}|${a.class_id}`));
   const assigned = needs.filter((need) => filled.has(`${need.date}|${need.period}|${classIdByName.get(need.className.toLocaleLowerCase("id-ID")) || ""}`)).length;
   return { total: needs.length, assigned, pending: needs.length - assigned };
