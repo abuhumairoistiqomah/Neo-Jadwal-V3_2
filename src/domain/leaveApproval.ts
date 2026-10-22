@@ -1,3 +1,5 @@
+import type { LeaveAbsenceCategory } from "./leaveClassificationV320";
+
 export type LeaveWorkflowStatus = "SUBMITTED" | "APPROVED" | "DECLINED" | "CANCELLED" | string;
 
 export interface LeaveReviewPeriod {
@@ -36,6 +38,7 @@ export interface LeaveReviewRequest {
   teacherName: string;
   scheduleDate: string;
   requestType: "FULL_DAY" | "PARTIAL" | string;
+  absenceCategory?: LeaveAbsenceCategory;
   reason: string;
   detail: string | null;
   status: LeaveWorkflowStatus;

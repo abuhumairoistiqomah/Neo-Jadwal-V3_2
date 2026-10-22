@@ -73,7 +73,10 @@ test('RPC v2 retains staff checks, uses stored request type and restricts anonym
   assert.match(sql,/current_user_is_staff\(\)/);
   assert.match(sql,/request_type/);
   assert.match(sql,/revoke all on function public\.ejadwal_teacher_leave_profile_v2\(uuid,date,date\) from public,anon/);
-  assert.match(repo,/ejadwal_teacher_leave_profile_v2/);
+  assert.match(repo,/ejadwal_teacher_leave_profile_v320/);
+  const sql320=readFileSync(`${root}/supabase/migrations/202610220001_v3_20_leave_classification.sql`,'utf8');
+  assert.match(sql320,/ejadwal_teacher_leave_profile_v2/);
+  assert.match(sql320,/current_user_is_staff\(\)/);
   assert.match(ui,/https:\/\/wa\.me\/6281325245959/);
   assert.match(ui,/Bukti Izin dari Manajemen/);
 });

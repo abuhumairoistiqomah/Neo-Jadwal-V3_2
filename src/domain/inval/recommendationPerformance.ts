@@ -16,6 +16,7 @@ export interface GeneratedInvalRowForRecommendation {
   jam_ke: number;
   kelas: string;
   mapel: string;
+  subjectOverride?: string;
   selectedPengganti: string;
   tugas?: string;
   constraintOverrideIds?: string[];
@@ -64,7 +65,7 @@ export function buildRecommendationDependencyKey(
       Number(row.jam_ke),
       (row.kelas || "").trim().toLowerCase(),
       (row.recommendationClassLabel || "").trim().toLowerCase(),
-      (row.mapel || "").trim().toLowerCase(),
+      (row.subjectOverride?.trim() || row.mapel || "").trim().toLowerCase(),
       (row.targetSlots || [])
         .map((slot) => `${String(slot.kelas || "").trim().toLowerCase()}@${String(slot.mapel || "").trim().toLowerCase()}`)
         .sort()

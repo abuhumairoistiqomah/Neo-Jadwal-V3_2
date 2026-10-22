@@ -27,6 +27,7 @@ import {
   resolvePartialLeaveSelection,
   type LeaveRequestType,
 } from "../domain/leaveRequest";
+import { ABSENCE_CATEGORY_OPTIONS, type NewLeaveAbsenceCategory } from "../domain/leaveClassificationV320";
 import { syncTaskResourcesWithText } from "../domain/taskResources";
 import { saveStoredTaskAccess } from "../domain/taskRecovery";
 import { uploadPublicLeaveTaskFile, type PublicLeaveTaskUploadResult } from "../infrastructure/drive/publicLeaveTaskDriveBridge";
@@ -106,6 +107,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
   const [teacherTouched, setTeacherTouched] = useState(false);
   const [scheduleDate, setScheduleDate] = useState(localDateString);
   const [requestType, setRequestType] = useState<LeaveRequestType>("FULL_DAY");
+  const [absenceCategory, setAbsenceCategory] = useState<NewLeaveAbsenceCategory>("PERSONAL");
   const [reason, setReason] = useState("");
   const [detail, setDetail] = useState("");
   const [explicitSelectedKeys, setExplicitSelectedKeys] = useState<Set<string>>(new Set());
@@ -400,7 +402,7 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
           return { period: slot.period, description, resources };
         });
       const payload = buildPublicLeaveSubmission({
-        teacherName, scheduleDate, requestType, reason, detail,
+        teacherName, scheduleDate, requestType, absenceCategory, reason, detail,
         slots: selectedSlots, tasks,
       });
       if (staffDirect) {
@@ -616,6 +618,22 @@ export const LeaveRequestForm: React.FC<LeaveRequestFormProps> = ({
 
             <div>
               <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500"><T>{"Jenis Izin"}</T></label>
+              <div className="grid sm:grid-cols-2 gap-2 mt-2" role="radiogroup" aria-label="Jenis Izin">
+                {ABSENCE_CATEGORY_OPTIONS.map((option) => (
+                  <button key={option.value} type="button" role="radio" aria-checked={absenceCategory === option.value}
+                    disabled={Boolean(pendingEvidenceDraft) || submitting}
+                    onClick={() => setAbsenceCategory(option.value)}
+                    className={`rounded-xl border px-4 py-3 text-left transition-colors disabled:opacity-50 ${absenceCategory === option.value ? 'border-emerald-400 bg-emerald-50 text-emerald-900' : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'}`}>
+                    <div className="font-extrabold text-sm"><T>{option.label}</T></div>
+                    <div className="text-[11px] opacity-70 mt-0.5"><T>{option.description}</T></div>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-500 mt-2">Jenis menjelaskan alasan ketidaktersediaan mengajar, bukan tingkat persetujuan. Tugas Sekolah tetap perlu persetujuan manajemen.</p>
+            </div>
+
+            <div>
+              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500"><T>{"Cakupan Izin"}</T></label>
               <div className="grid sm:grid-cols-2 gap-2 mt-2">
                 <button
                   type="button"

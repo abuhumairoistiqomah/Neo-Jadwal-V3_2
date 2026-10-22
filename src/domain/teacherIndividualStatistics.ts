@@ -1,4 +1,5 @@
 import type { JadwalInsidentalItem, KalenderAkademikItem, LogIzinItem, ScheduleItem } from './models';
+import { normalizeAbsenceCategory, summarizeAbsenceCategories, type LeaveAbsenceCategory } from "./leaveClassificationV320";
 import { buildEffectiveScheduleForDate } from './schedule/effectiveSchedule';
 
 /** An unknown request type is deliberately NOT inferred from the number of JPs in a legacy log. */
@@ -11,6 +12,7 @@ export interface IndividualLeaveUnit {
   reason: string;
   source: string;
   requestType?: LeaveScope;
+  absenceCategory?: LeaveAbsenceCategory;
 }
 export interface IndividualLeaveProfile {
   teacherId: string;
@@ -42,6 +44,7 @@ export interface IndividualLeaveReasonRecord {
   category: LeaveReasonCategory;
   source: string;
   requestType: LeaveScope;
+  absenceCategory?: LeaveAbsenceCategory;
   teachingJp: number;
   homeroomJp: number;
   freeJp: number;
@@ -50,6 +53,7 @@ export interface IndividualLeaveReasonRecord {
 export interface IndividualLeaveReasonSummary {
   reason: string;
   category: LeaveReasonCategory;
+  absenceCategory?: LeaveAbsenceCategory;
   dates: number;
   teachingJp: number;
   homeroomJp: number;
@@ -78,6 +82,7 @@ export interface IndividualTeacherStatistics {
   daysByMode: Record<PatternMode, IndividualDayBucket[]>;
   // All recorded reasons, including school duties/family matters and unspecified legacy entries.
   // A single date with several absent periods appears once per reason/source/scope.
+  categoryBreakdown: ReturnType<typeof summarizeAbsenceCategories>;
   leaveReasonRecords: IndividualLeaveReasonRecord[];
   leaveReasonSummary: IndividualLeaveReasonSummary[];
   sickRecords: Array<{date: string; reason: string; teachingJp: number; totalJp: number}>;
@@ -229,9 +234,10 @@ export function buildIndividualTeacherStatistics(input: {
     const reason = String(unit.reason || '').trim() || 'Tanpa alasan';
     const source = String(unit.source || '').trim() || 'UNKNOWN';
     const requestType = scopeOf(unit);
-    const key = `${unit.date}|${reason.toLocaleLowerCase('id-ID')}|${source}|${requestType}`;
+    const absenceCategory = normalizeAbsenceCategory(unit.absenceCategory);
+    const key = `${unit.date}|${reason.toLocaleLowerCase('id-ID')}|${source}|${requestType}|${absenceCategory}`;
     const found = reasonsByDate.get(key) || {
-      date:unit.date, reason, category:classifyLeaveReason(reason), source, requestType,
+      date:unit.date, reason, category:classifyLeaveReason(reason), source, requestType, absenceCategory,
       teachingJp:0, homeroomJp:0, freeJp:0, totalJp:0,
     };
     found.totalJp++;
@@ -244,9 +250,9 @@ export function buildIndividualTeacherStatistics(input: {
     b.date.localeCompare(a.date) || a.reason.localeCompare(b.reason,'id-ID'));
   const reasonsByText = new Map<string, IndividualLeaveReasonSummary & {dateSet: Set<string>}>();
   leaveReasonRecords.forEach(record => {
-    const key = record.reason.replace(/\s+/g,' ').trim().toLocaleLowerCase('id-ID');
+    const key = `${record.absenceCategory||'UNCLASSIFIED'}|${record.reason.replace(/\s+/g,' ').trim().toLocaleLowerCase('id-ID')}`;
     const found = reasonsByText.get(key) || {
-      reason: record.reason.replace(/\s+/g,' ').trim(), category: record.category, dates: 0,
+      reason: record.reason.replace(/\s+/g,' ').trim(), category: record.category, absenceCategory:record.absenceCategory, dates: 0,
       teachingJp:0, homeroomJp:0, freeJp:0, totalJp:0, dateSet:new Set<string>(),
     };
     found.dateSet.add(record.date);
@@ -288,6 +294,10 @@ export function buildIndividualTeacherStatistics(input: {
       FULL_DAY: absentDates.FULL_DAY.size, PARTIAL: absentDates.PARTIAL.size, UNKNOWN: absentDates.UNKNOWN.size,
     },
     days: byMode.ALL, daysByMode: byMode,
+    categoryBreakdown:summarizeAbsenceCategories(units.map(unit=>({
+      date:unit.date,period:unit.period,periodType:unit.periodType,
+      category:normalizeAbsenceCategory(unit.absenceCategory),
+    }))),
     leaveReasonRecords, leaveReasonSummary,
     sickRecords:[...sick.values()].sort((a,b)=>b.date.localeCompare(a.date)),
     chronological:[...chronology.values()].filter(row=>row.scheduled>0 || row.absent>0 || row.jpFreeAbsent>0 || row.jp0Absent).sort((a,b)=>a.date.localeCompare(b.date)),

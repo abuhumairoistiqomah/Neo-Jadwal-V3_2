@@ -1,3 +1,4 @@
+import { absenceCategoryLabel } from "../domain/leaveClassificationV320";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
@@ -422,7 +423,7 @@ export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-mono text-xs font-black bg-slate-100 px-2 py-1 rounded-lg">{request.requestCode}</span>
                           <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-amber-100 text-amber-800">SUBMITTED</span>
-                          <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700">{request.requestType}</span>
+                          <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700">{request.requestType}</span><span className="text-[10px] font-black px-2 py-1 rounded-lg bg-teal-50 text-teal-800">{absenceCategoryLabel(request.absenceCategory || 'UNCLASSIFIED')}</span>
                         </div>
                         <div className="font-black text-lg text-slate-900 mt-2 flex items-center gap-2"><UserRound className="w-4 h-4 text-slate-400" /> {request.teacherName}</div>
                         <div className="text-sm text-slate-600 mt-1">{formatDate(request.scheduleDate)} • {request.reason}</div>

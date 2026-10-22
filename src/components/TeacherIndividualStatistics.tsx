@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, BarChart3, CalendarDays, FileDown, RefreshCw, ShieldAlert, UserRound } from 'lucide-react';
 import type { JadwalInsidentalItem, KalenderAkademikItem, LogIzinItem, ScheduleItem, Teacher } from '../domain/models';
 import { getSchoolTodayISO } from '../domain/date';
+import { absenceCategoryLabel, type LeaveAbsenceCategory } from '../domain/leaveClassificationV320';
 import { buildIndividualTeacherStatistics, type IndividualLeaveProfile, type PatternMode, type LeaveReasonCategory } from '../domain/teacherIndividualStatistics';
 import { TeacherIndividualStatisticsRepository } from '../infrastructure/repositories/teacherIndividualStatisticsRepository';
 import { SearchableSelect } from './ui/SearchableSelect';
@@ -79,6 +80,7 @@ export const TeacherIndividualStatistics:React.FC<Props> = ({teachers,schedules,
   const [showAllDates,setShowAllDates] = useState(false);
   const [weekdayFilter,setWeekdayFilter] = useState('ALL');
   const [reasonFilter,setReasonFilter] = useState<'ALL'|LeaveReasonCategory>('ALL');
+  const [categoryFilter,setCategoryFilter] = useState<'ALL'|LeaveAbsenceCategory>('ALL');
   const [reasonSearch,setReasonSearch] = useState('');
   const [showAllReasons,setShowAllReasons] = useState(false);
   const sortedTeachers = useMemo(()=>teachers.filter(t=>t.id).sort((a,b)=>a.nama.localeCompare(b.nama,'id-ID')), [teachers]);
@@ -107,12 +109,14 @@ export const TeacherIndividualStatistics:React.FC<Props> = ({teachers,schedules,
   },[teacherId]);
   const visibleReasonRecords = useMemo(() => (stats?.leaveReasonRecords || []).filter(record => {
     if (reasonFilter !== 'ALL' && record.category !== reasonFilter) return false;
+    if (categoryFilter !== 'ALL' && record.absenceCategory !== categoryFilter) return false;
     return record.reason.toLocaleLowerCase('id-ID').includes(reasonSearch.trim().toLocaleLowerCase('id-ID'));
-  }),[stats,reasonFilter,reasonSearch]);
+  }),[stats,reasonFilter,reasonSearch,categoryFilter]);
   const visibleReasonSummary = useMemo(() => (stats?.leaveReasonSummary || []).filter(record => {
     if (reasonFilter !== 'ALL' && record.category !== reasonFilter) return false;
+    if (categoryFilter !== 'ALL' && record.absenceCategory !== categoryFilter) return false;
     return record.reason.toLocaleLowerCase('id-ID').includes(reasonSearch.trim().toLocaleLowerCase('id-ID'));
-  }),[stats,reasonFilter,reasonSearch]);
+  }),[stats,reasonFilter,reasonSearch,categoryFilter]);
   const shownReasons = showAllReasons ? visibleReasonRecords : visibleReasonRecords.slice(0,20);
   const reasonDates = new Set(visibleReasonRecords.map(record=>record.date)).size;
   const reasonJps = visibleReasonRecords.reduce((sum,record)=>sum+record.totalJp,0);
@@ -174,6 +178,18 @@ export const TeacherIndividualStatistics:React.FC<Props> = ({teachers,schedules,
     {!teacherId && <p className="rounded-xl bg-slate-100 p-5 text-sm text-slate-500">Pilih satu guru untuk melihat statistiknya.</p>}
     {stats && profile && teacher && <>
       <TeacherV319OperationalSummary teacher={teacher} profile={profile} schedules={schedules} incidentals={incidentals} calendar={academicEvents} logs={logs}/>
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm space-y-3">
+        <h2 className="text-lg font-black text-slate-900">Jenis Ketidaktersediaan Mengajar — V3.20</h2>
+        <p className="text-xs text-slate-600">Sumber resmi: pengajuan APPROVED dan tugas resmi dari Aturan Guru Badal. Hari tiap kategori dapat beririsan; JP unik berdasarkan tanggal + JP. Bukan verifikasi presensi fisik.</p>
+        <div className="grid sm:grid-cols-3 gap-3">
+          {(['PERSONAL','SCHOOL_DUTY','UNCLASSIFIED'] as const).map(category=><div key={category} className="rounded-xl border bg-slate-50 p-3">
+            <div className="text-xs font-bold text-slate-600">{absenceCategoryLabel(category)}</div>
+            <div className="text-2xl font-black mt-1">{stats.categoryBreakdown[category].teachingJp} JP</div>
+            <div className="text-xs text-slate-500">{stats.categoryBreakdown[category].days} hari • {stats.categoryBreakdown[category].otherJp} JP0/Free</div>
+          </div>)}
+        </div>
+        <p className="text-xs text-amber-800">Data lama tanpa kategori tetap Belum Dikategorikan. Kategori Tugas Sekolah tidak otomatis dihitung sebagai JP mengajar efektif.</p>
+      </section>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Metric label="JP izin mengajar" value={`${stats.recordedTeachingLeaveJp} JP`} description="Hanya JP1–JP6 yang ditinggalkan; tidak menghitung JP0/Free."/>
         <Metric label="Total JP ketidakhadiran" value={`${stats.totalLeaveJp} JP`} description={`${stats.recordedTeachingLeaveJp} mengajar + ${stats.homeroomLeaveJp} JP0 + ${stats.freeLeaveJp} Free.`}/>
@@ -253,6 +269,12 @@ export const TeacherIndividualStatistics:React.FC<Props> = ({teachers,schedules,
         <h2 className="text-lg font-black text-slate-900">Rekap seluruh alasan izin (internal)</h2>
         <p className="text-sm text-slate-600">Menampilkan alasan <strong>persis sesuai catatan izin</strong>, termasuk pendampingan lomba, tugas sekolah, keperluan keluarga, sakit, atau alasan lain. Tidak hanya izin sakit.</p>
         <div className="no-print flex flex-col gap-3 sm:flex-row sm:items-center">
+          <label className="text-xs font-bold text-slate-600">Jenis Izin
+            <select value={categoryFilter} onChange={e=>{setCategoryFilter(e.target.value as 'ALL'|LeaveAbsenceCategory);setShowAllReasons(false);}} className="mt-1 block rounded-lg border border-slate-200 bg-white p-2.5 text-sm">
+              <option value="ALL">Semua Jenis</option>
+              {(['PERSONAL','SCHOOL_DUTY','UNCLASSIFIED'] as const).map(category=><option key={category} value={category}>{absenceCategoryLabel(category)}</option>)}
+            </select>
+          </label>
           <label className="text-xs font-bold text-slate-600">Kelompok alasan
             <select value={reasonFilter} onChange={e=>{setReasonFilter(e.target.value as 'ALL'|LeaveReasonCategory);setShowAllReasons(false);}} className="mt-1 block rounded-lg border border-slate-200 bg-white p-2.5 text-sm">
               {REASON_FILTERS.map(filter=><option key={filter.value} value={filter.value}>{filter.label}</option>)}
@@ -276,8 +298,8 @@ export const TeacherIndividualStatistics:React.FC<Props> = ({teachers,schedules,
         </div>}
         <h3 className="text-sm font-black text-slate-800">Rincian alasan menurut tanggal</h3>
         {visibleReasonRecords.length ? <div className="overflow-x-auto"><table className="w-full min-w-[700px] text-sm">
-          <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3"><T>{"Tanggal"}</T></th><th className="pr-3">Alasan asli</th><th className="px-2">Jenis izin</th><th className="px-2">JP mengajar</th><th className="px-2">JP0</th><th className="px-2">Free</th><th className="px-2">Total</th><th className="pl-2">Sumber</th></tr></thead>
-          <tbody>{shownReasons.map(row=><tr key={`${row.date}|${row.reason}|${row.source}|${row.requestType}`} className="border-b border-slate-100"><td className="whitespace-nowrap py-3 pr-3">{dayName(row.date)}, {formatDay(row.date)}</td><td className="min-w-[150px] pr-3 break-words">{row.reason}</td><td className="whitespace-nowrap px-2 text-xs">{scopeText(row.requestType)}</td><td className="px-2">{row.teachingJp}</td><td className="px-2">{row.homeroomJp}</td><td className="px-2">{row.freeJp}</td><td className="px-2 font-bold">{row.totalJp}</td><td className="whitespace-nowrap pl-2 text-xs text-slate-500">{sourceText(row.source)}</td></tr>)}</tbody>
+          <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3"><T>{"Tanggal"}</T></th><th className="pr-3">Alasan asli</th><th className="px-2">Jenis Izin</th><th className="px-2">Cakupan</th><th className="px-2">JP mengajar</th><th className="px-2">JP0</th><th className="px-2">Free</th><th className="px-2">Total</th><th className="pl-2">Sumber</th></tr></thead>
+          <tbody>{shownReasons.map(row=><tr key={`${row.date}|${row.reason}|${row.source}|${row.requestType}|${row.absenceCategory}`} className="border-b border-slate-100"><td className="whitespace-nowrap py-3 pr-3">{dayName(row.date)}, {formatDay(row.date)}</td><td className="min-w-[150px] pr-3 break-words">{row.reason}</td><td className="whitespace-nowrap px-2 text-xs">{absenceCategoryLabel(row.absenceCategory || 'UNCLASSIFIED')}</td><td className="whitespace-nowrap px-2 text-xs">{scopeText(row.requestType)}</td><td className="px-2">{row.teachingJp}</td><td className="px-2">{row.homeroomJp}</td><td className="px-2">{row.freeJp}</td><td className="px-2 font-bold">{row.totalJp}</td><td className="whitespace-nowrap pl-2 text-xs text-slate-500">{sourceText(row.source)}</td></tr>)}</tbody>
         </table></div> : <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">Tidak ada alasan izin yang tercatat sesuai filter dan periode ini.</p>}
         {!showAllReasons && visibleReasonRecords.length > 20 && <button type="button" onClick={()=>setShowAllReasons(true)} className="no-print text-sm font-bold text-blue-700">Tampilkan seluruh {visibleReasonRecords.length} catatan tanggal/alasan</button>}
         <p className="text-xs text-slate-500">Filter “terkait sakit” hanya mendeteksi kata kunci pada teks; ini bukan diagnosis atau penentuan keabsahan izin. Alasan lain tetap ditampilkan apa adanya. Satu tanggal bisa memiliki lebih dari satu alasan; JP kelas gabungan dihitung sekali. Hanya izin disetujui dan catatan historis aktif yang tersedia pada data sumber.</p>

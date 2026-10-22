@@ -1,4 +1,5 @@
 import { requireSupabaseClient } from '../supabase/client';
+import { normalizeAbsenceCategory, type LeaveAbsenceCategory } from '../../domain/leaveClassificationV320';
 import { explainApprovedLeaveDatabaseError } from '../../domain/approvedLeaveMaintenance';
 
 export interface ApprovedLeaveCoverage {
@@ -21,6 +22,7 @@ export interface ApprovedLeaveEntry {
   dateEnd: string;
   reason: string;
   detail: string;
+  absenceCategory: LeaveAbsenceCategory;
   decidedAt: string;
   status: string;
   deleted: boolean;
@@ -33,7 +35,7 @@ export class SupabaseApprovedLeaveMaintenanceRepository {
   async list(limit = 250): Promise<ApprovedLeaveEntry[]> {
     const client = requireSupabaseClient();
     const {data: leaves,error} = await client.from('leave_requests')
-      .select('id,teacher_id,date_start,date_end,reason,detail,status,request_code,decided_at,deleted_at,deleted_previous_status')
+      .select('id,teacher_id,date_start,date_end,reason,detail,status,request_code,decided_at,deleted_at,deleted_previous_status,absence_category')
       .or('status.eq.APPROVED,deleted_at.not.is.null')
       .order('date_end',{ascending:false}).limit(Math.max(1,Math.min(500,limit)));
     if (error) throw new Error(`Gagal membaca pengajuan disetujui: ${explainApprovedLeaveDatabaseError(error.message)}`);
@@ -53,7 +55,8 @@ export class SupabaseApprovedLeaveMaintenanceRepository {
       id:String(r.id), code:String(r.request_code||r.id),
       teacher:names.get(String(r.teacher_id))||'Guru tidak ditemukan',
       dateStart:String(r.date_start),dateEnd:String(r.date_end),
-      reason:String(r.reason||''),detail:String(r.detail||''),decidedAt:String(r.decided_at||''),
+      reason:String(r.reason||''),detail:String(r.detail||''),
+      absenceCategory:normalizeAbsenceCategory(r.absence_category),decidedAt:String(r.decided_at||''),
       status:String(r.status),deleted:Boolean(r.deleted_at),
       slots:(coverage.data||[]).filter((v:any)=>v.leave_request_id===r.id).map((v:any)=>({
         id:String(v.id),scheduleDate:String(v.schedule_date),period:Number(v.period),
@@ -63,6 +66,13 @@ export class SupabaseApprovedLeaveMaintenanceRepository {
       periods:(periods.data||[]).filter((v:any)=>v.leave_request_id===r.id).map((v:any)=>({date:String(v.schedule_date),period:Number(v.period),type:String(v.period_type)})),
       tasks:(tasks.data||[]).filter((v:any)=>v.leave_request_id===r.id).map((v:any)=>({period:Number(v.period),description:String(v.description||'')})),
     }));
+  }
+  /** Correction of approved historical classification only, audited in PostgreSQL. */
+  async setAbsenceCategory(requestId:string,category:LeaveAbsenceCategory,note:string):Promise<void> {
+    const {error}=await requireSupabaseClient().rpc('ejadwal_set_leave_category_v320',{
+      p_leave_request_id:requestId,p_absence_category:category,p_note:note,
+    });
+    if(error)throw new Error(`Gagal mengubah kategori izin: ${error.message}`);
   }
   async moveTeachingPeriod(requestId:string,date:string,oldPeriod:number,newPeriod:number,note:string):Promise<number> {
     const {data,error}=await requireSupabaseClient().rpc('ejadwal_move_approved_leave_period_v1',{

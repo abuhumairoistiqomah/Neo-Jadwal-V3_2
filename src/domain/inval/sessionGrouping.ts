@@ -87,6 +87,8 @@ export interface InvalSessionRowForPersistence {
   kelas: string;
   mapel: string;
   selectedPengganti: string;
+  /** Explicit per-session subject change, never the master subject. */
+  subjectOverride?: string;
   tugas?: string;
   constraintOverrideIds?: string[];
   targetSlots?: InvalSessionTargetSlot[];
@@ -100,20 +102,26 @@ export function expandInvalSessionRowsForPersistence(args: {
 }): Array<{
   log: Omit<LogIzinItem, "id">;
   constraintOverrideIds: string[];
+  subjectOverride: { originalSubject: string; subject: string } | null;
 }> {
   return args.rows.flatMap((row) => {
     const targets = row.targetSlots && row.targetSlots.length > 0
       ? row.targetSlots
       : [{ kelas: row.kelas, mapel: row.mapel }];
 
+    const override = String(row.subjectOverride || "").trim();
+    // Preserve each source slot's original subject for optimistic concurrency.
     return targets.map((target) => ({
+      subjectOverride: override && override !== String(target.mapel || row.mapel).trim()
+        ? { originalSubject: String(target.mapel || row.mapel).trim(), subject: override }
+        : null,
       log: {
         tanggal: args.tanggal,
         guru_izin: args.guruIzin,
         alasan: args.alasan,
         jam_ke: Number(row.jam_ke),
         kelas: target.kelas,
-        mapel: target.mapel || row.mapel,
+        mapel: override || target.mapel || row.mapel,
         guru_pengganti: row.selectedPengganti,
         tugas: row.tugas || "",
       },

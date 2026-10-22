@@ -29,6 +29,8 @@ export interface InvalWriteMetadata {
   constraintOverrideIdsByRow?: string[][];
   /** Resource metadata aligned 1:1 with the expanded persistence rows. */
   taskResourcesByRow?: InvalTaskResourceInput[][];
+  /** Aligned per persisted class slot; only explicit changes are forwarded. */
+  subjectOverridesByRow?: Array<{ originalSubject: string; subject: string } | null>;
   overrideNote?: string;
 }
 
@@ -37,6 +39,8 @@ export interface InvalWriteRow {
   class_code: string;
   period: number;
   subject: string;
+  /** Optional optimistic subject concurrency marker. */
+  original_subject?: string;
   absent_teacher_id: string;
   substitute_teacher_id: string | null;
   coverage_decision?: "NO_SUBSTITUTE";
@@ -133,11 +137,25 @@ export function buildInvalWriteBundle(input: {
       );
     }
 
+    const subjectChange = input.metadata?.subjectOverridesByRow?.[index] ?? null;
+    if (subjectChange) {
+      const original = subjectChange.originalSubject.trim();
+      const desired = subjectChange.subject.trim();
+      if (!original || !desired || desired.length > 120 || original.length > 120) {
+        throw new Error("Mapel awal dan mapel pengganti wajib terisi (maksimum 120 karakter).");
+      }
+      if (Number(log.jam_ke) === 0) throw new Error("Mapel JP0 Homeroom tidak boleh diganti.");
+      if (desired !== String(log.mapel || "").trim()) {
+        throw new Error("Mapel badal berubah saat proses penyimpanan. Generate ulang sesi.");
+      }
+    }
+
     return {
       schedule_date: log.tanggal,
       class_code: String(log.kelas || "").trim(),
       period: Number(log.jam_ke),
       subject: String(log.mapel || "").trim(),
+      ...(subjectChange ? { original_subject: subjectChange.originalSubject.trim() } : {}),
       absent_teacher_id: absent.id,
       substitute_teacher_id: noAdditionalSubstitute ? null : substitute!.id,
       ...(noAdditionalSubstitute ? { coverage_decision: "NO_SUBSTITUTE" as const } : {}),

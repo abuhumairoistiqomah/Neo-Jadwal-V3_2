@@ -21,7 +21,8 @@ test("RC3.4.4.1 explicitly preserves academic event group type through history f
 
 test("RC3.4.4.1 explicitly preserves substitute rule type through history filtering", () => {
   const rules = read("src/components/SubstituteConstraintAdmin.tsx");
-  assert.match(rules, /filterOperationalHistory<SubstituteConstraintAdminRow>\(rows,/);
+  assert.match(rules, /filterOperationalHistory<SubstituteConstraintAdminRow>\(\s*rows\.filter/);
+  assert.match(rules, /showDeletedRules \|\| !row\.deleted_at/);
   assert.match(rules, /isPastSubstituteRule\(row, schoolToday\)/);
   assert.match(rules, /displayedRules\.map\(\(row\)/);
 });

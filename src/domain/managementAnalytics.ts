@@ -216,6 +216,70 @@ export function mergeTeacherEffectiveActivity(
   };
 }
 
+
+/** RC1.2: only the explicitly designated teacher placeholder is omitted from
+ * per-teacher reporting. Do not suppress real teachers with similar names. */
+export function isAnalyticsPlaceholderTeacher(teacherName: string): boolean {
+  return teacherName.trim().replace(/\s+/g, ' ').toLocaleLowerCase('id-ID') === 'guru belum ditentukan';
+}
+
+export type ManagementAbsenceFilter = 'ALL' | 'PERSONAL' | 'SCHOOL_DUTY' | 'UNCLASSIFIED';
+export interface ManagementTeacherCategoryActivity {
+  teacherId: string;
+  category: ManagementAbsenceFilter;
+  teachingJp: number;
+  otherJp: number;
+  days: number;
+}
+
+/** The V3.20 category RPC is authoritative for absence due to both school duties
+ * and personal leave. V3.18 remains authoritative for teaching JP/days only.
+ * `ALL` is computed server-side from unique teacher/date/JP keys rather than
+ * summing category days, which could overlap on a mixed-duty date. */
+export function parseManagementTeacherCategoryActivity(raw: unknown): ManagementTeacherCategoryActivity[] {
+  if (!Array.isArray(raw)) throw new Error('ANALYTICS_V320_INVALID_CATEGORY_PAYLOAD');
+  const keys = new Set<string>();
+  return raw.map((entry) => {
+    if (!entry || typeof entry !== 'object') throw new Error('ANALYTICS_V320_INVALID_CATEGORY_ROW');
+    const row = entry as Record<string, unknown>;
+    const teacherId = String(row.teacher_id || '');
+    const category = String(row.category || '') as ManagementAbsenceFilter;
+    const values = [row.teaching_jp, row.other_jp, row.days];
+    const key = `${teacherId}|${category}`;
+    if (!teacherId || !['ALL','PERSONAL','SCHOOL_DUTY','UNCLASSIFIED'].includes(category)
+      || keys.has(key) || !values.every((v) => v !== null && v !== undefined && Number.isSafeInteger(Number(v)) && Number(v) >= 0)) {
+      throw new Error('ANALYTICS_V320_INVALID_CATEGORY_ROW');
+    }
+    keys.add(key);
+    return {teacherId, category, teachingJp:Number(values[0]), otherJp:Number(values[1]), days:Number(values[2])};
+  });
+}
+
+/** Changing category must update the table AND exported rows. */
+export function selectManagementCategoryTeacherRows(
+  teachers: ReadonlyArray<ManagementTeacherAnalyticsRow>,
+  categoryActivity: ReadonlyArray<ManagementTeacherCategoryActivity>,
+  category: ManagementAbsenceFilter,
+): ManagementTeacherAnalyticsRow[] {
+  const lookup = new Map(categoryActivity.map((row) => [`${row.teacherId}|${row.category}`, row]));
+  return teachers.filter((teacher) => !isAnalyticsPlaceholderTeacher(teacher.teacherName))
+    .flatMap((teacher) => {
+      const selected = lookup.get(`${teacher.teacherId}|${category}`);
+      // For a specific filter hide teachers without affected JP0/Free/teaching days.
+      if (category !== 'ALL' && !selected) return [];
+      const totalLeaveJp = selected?.teachingJp ?? 0;
+      const totalLeaveDays = selected?.days ?? 0;
+      const effective = teacher.effectiveTeachingJp;
+      if (effective === undefined || !Number.isFinite(effective)) {
+        throw new Error(`ANALYTICS_V318_TEACHER_ACTIVITY_MISSING: ${teacher.teacherId}`);
+      }
+      const denominator = effective + totalLeaveJp;
+      return [{...teacher, totalLeaveJp, totalLeaveDays,
+        teachingSharePct:denominator ? effective / denominator * 100 : null,
+        leaveSharePct:denominator ? totalLeaveJp / denominator * 100 : null}];
+    });
+}
+
 export const teacherActivitySortKeys = [
   'name', 'effectiveTeachingJp', 'totalLeaveJp', 'effectiveTeachingDays',
   'totalLeaveDays', 'teachingSharePct', 'leaveSharePct',
@@ -242,6 +306,20 @@ export function sortTeacherActivityRows(
     }
     return a.teacherName.localeCompare(b.teacherName, 'id-ID', { sensitivity: 'base' });
   });
+}
+
+/** The exported CSV must disclose which absence category produced the numbers. */
+export function labelTeacherCategoryCsv(csv: string, category: ManagementAbsenceFilter): string {
+  const title = category === 'ALL' ? 'Semua Jenis' :
+    category === 'PERSONAL' ? 'Urusan Pribadi' :
+    category === 'SCHOOL_DUTY' ? 'Tugas Sekolah' : 'Belum Dikategorikan';
+  const split = csv.indexOf('\n');
+  const header = split >= 0 ? csv.slice(0, split) : csv;
+  const content = split >= 0 ? csv.slice(split) : '';
+  return header
+    .replace('"Total JP Izin"', `"JP Tidak Mengajar (${title})"`)
+    .replace('"Total Hari Izin"', `"Hari Terdampak (${title})"`)
+    .replace('"Persentase JP Izin"', `"Persentase JP Tidak Mengajar (${title})"`) + content;
 }
 
 export function buildTeacherAnalyticsCsv(rows: ManagementTeacherAnalyticsRow[]): string {

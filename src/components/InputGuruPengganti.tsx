@@ -551,6 +551,8 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
     jam_ke: number;
     kelas: string;
     mapel: string;
+    /** Only the subject for the selected date/classes/JP, never the master. */
+    subjectOverride?: string;
     selectedPengganti: string;
     tugas?: string;
     taskResources: InvalTaskResourceInput[];
@@ -559,6 +561,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
     targetSlots: Array<{ kelas: string; mapel: string }>;
     isCombinedGroup?: boolean;
   }>>([]);
+  const [editingSubjectRows, setEditingSubjectRows] = useState<number[]>([]);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -947,6 +950,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
   // schedule rows are merged into one line, while persistence still expands
   // back to one coverage row per underlying class.
   const handleGenerate = () => {
+    setEditingSubjectRows([]);
     if (!guruIzin) {
       setErrorMessage("Silakan pilih Guru yang Izin terlebih dahulu.");
       return;
@@ -1309,7 +1313,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
 
   const recommendationsByRow = useMemo(() => {
     return generatedRows.map((row, index) =>
-      getRecommendedTeachers(row.jam_ke, row.recommendationClassLabel || row.kelas, row.mapel, index),
+      getRecommendedTeachers(row.jam_ke, row.recommendationClassLabel || row.kelas, row.subjectOverride?.trim() || row.mapel, index),
     );
     // `tugas` is intentionally not an invalidator; see recommendationDependencyKey.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1477,6 +1481,16 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
     };
   }, [verificationModalData, teachers, effectiveSchedulesForDate, logs, jadwalInsidental, tanggal, selectedDayName, recommendationsByRow]);
 
+  const handleSubjectOverrideChange = React.useCallback((index: number, value: string) => {
+    setGeneratedRows((current) => current.map((row, i) =>
+      i === index ? { ...row, subjectOverride: value } : row));
+  }, []);
+
+  const toggleSubjectEditor = React.useCallback((index: number) => {
+    setEditingSubjectRows((current) => current.includes(index)
+      ? current.filter((i) => i !== index) : [...current, index]);
+  }, []);
+
   // Handle individual replacement selection
   const handlePenggantiChange = React.useCallback((index: number, teacherName: string, overrideConstraintIds: string[] = []) => {
     setGeneratedRows((current) => current.map((row, rowIndex) =>
@@ -1509,7 +1523,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
         scheduleDate: tanggal,
         period: row.jam_ke,
         classLabel: row.kelas,
-        subject: row.mapel,
+        subject: row.subjectOverride?.trim() || row.mapel,
       });
       setGeneratedRows((current) => current.map((item, rowIndex) => {
         if (rowIndex !== index) return item;
@@ -1586,6 +1600,13 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
       return;
     }
 
+    // Disallow blank/oversized edited subjects and unsupported special JP0.
+    const invalidSubject = generatedRows.find((row) => row.subjectOverride !== undefined
+      && (!row.subjectOverride.trim() || row.subjectOverride.trim().length > 120));
+    if (invalidSubject) {
+      setErrorMessage("Mapel badal tidak boleh kosong dan maksimal 120 karakter. Gunakan Kembalikan Mapel Asli untuk membatalkan perubahan.");
+      return;
+    }
     // Check if all rows have selected replacements
     const missingReplacement = generatedRows.some(row => !row.selectedPengganti);
     if (missingReplacement) {
@@ -1638,6 +1659,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
         roomIncidentalData,
         {
           constraintOverrideIdsByRow: expandedRows.map((entry) => entry.constraintOverrideIds),
+          subjectOverridesByRow: expandedRows.map((entry) => entry.subjectOverride),
           taskResourcesByRow: generatedRows.flatMap((row) => {
             const targetCount = row.targetSlots.length > 0 ? row.targetSlots.length : 1;
             return Array.from({ length: targetCount }, () => row.taskResources.map((resource) => ({ ...resource })));
@@ -1657,6 +1679,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
       setAlasan("");
       setSelectedHours([]);
       setGeneratedRows([]);
+      setEditingSubjectRows([]);
       setEnableRoomRelocation(false);
       setRelocationTargetRoom("");
       setRelocationReason("");
@@ -2075,13 +2098,45 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                           </span>
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="font-bold text-gray-800 text-base">{row.mapel}</h4>
+                          <h4 className="font-bold text-gray-800 text-base">{row.subjectOverride?.trim() || row.mapel}</h4>
+                          {!approvedWaitingSession && !officialDutySlots && !readOnlyPreview && row.jam_ke > 0 && (
+                            <button type="button" onClick={() => toggleSubjectEditor(index)}
+                              className="rounded-lg border border-indigo-200 px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
+                              aria-label={`Edit mata pelajaran JP ${row.jam_ke} ${row.kelas}`}>
+                              {editingSubjectRows.includes(index) ? "Tutup" : "✎ Edit Mapel"}
+                            </button>
+                          )}
                           {row.targetSlots.length > 1 && (
                             <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
                               KELAS GABUNG • {row.targetSlots.length} <T>{"KELAS"}</T>
                             </span>
                           )}
                         </div>
+                        {editingSubjectRows.includes(index) && !approvedWaitingSession && !officialDutySlots && !readOnlyPreview && row.jam_ke > 0 && (
+                          <div className="mt-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3 space-y-2">
+                            <label htmlFor={`inval-mapel-${index}`} className="block text-xs font-bold text-indigo-900">
+                              Mata pelajaran saat badal
+                            </label>
+                            <input id={`inval-mapel-${index}`} type="text" list={`inval-mapel-options-${index}`}
+                              value={row.subjectOverride === undefined ? row.mapel : row.subjectOverride}
+                              onChange={(event) => handleSubjectOverrideChange(index, event.target.value)}
+                              maxLength={120}
+                              className="w-full rounded-lg border border-indigo-200 bg-white p-2 text-sm text-gray-900"
+                              placeholder="Ketik nama mata pelajaran aktual" />
+                            <datalist id={`inval-mapel-options-${index}`}>
+                              {[...new Set(schedules.map((s) => String(s.mapel || "").trim()).filter(Boolean))]
+                                .sort((a, b) => a.localeCompare(b, "id-ID"))
+                                .map((subject) => <option key={subject} value={subject} />)}
+                            </datalist>
+                            <div className="text-xs text-indigo-800">Mapel asli: <strong>{row.mapel}</strong></div>
+                            {row.targetSlots.length > 1 && <div className="text-xs text-amber-800">
+                              Perubahan berlaku untuk seluruh {row.targetSlots.length} kelas dalam sesi gabungan ini.
+                            </div>}
+                            <button type="button" onClick={() => handleSubjectOverrideChange(index, row.mapel)}
+                              className="text-xs font-bold text-indigo-700 underline">Kembalikan Mapel Asli</button>
+                            <p className="text-[11px] text-indigo-700">Hanya tanggal, kelas, dan JP ini; jadwal master tidak berubah.</p>
+                          </div>
+                        )}
                         <p className="text-xs text-gray-500">
                           Kelas Target: <strong className="text-gray-700">{row.kelas}</strong>
                         </p>

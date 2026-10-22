@@ -1,4 +1,5 @@
 import React, {useCallback,useEffect,useMemo,useRef,useState} from 'react';
+import { absenceCategoryLabel, type LeaveAbsenceCategory } from '../domain/leaveClassificationV320';
 import {ArrowLeft,ChevronDown,Clock3,RefreshCw,Save,ShieldCheck,Trash2} from 'lucide-react';
 import {getCurrentUserContext} from '../infrastructure/auth/supabaseAuthRepository';
 import {getSchoolTodayISO} from '../domain/date';
@@ -13,6 +14,7 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
   const [loading,setLoading]=useState(false);
   const [loadFailed,setLoadFailed]=useState(false);
   const [rows,setRows]=useState<ApprovedLeaveEntry[]>([]);
+  const [categoryDrafts,setCategoryDrafts]=useState<Record<string,LeaveAbsenceCategory>>({});
   const [showPast,setShowPast]=useState(false);
   const [showDeleted,setShowDeleted]=useState(false);
   const [error,setError]=useState('');
@@ -29,7 +31,9 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
       const staff=Boolean(user?.roles.some(role=>role==='ADMIN'||role==='WAKASEK'));
       setAuthorized(staff);
       if(!staff){setRows([]);return;}
-      setRows(await repo.list());
+      const freshRows=await repo.list();
+      setRows(freshRows);
+      setCategoryDrafts({});
     } catch(e){setLoadFailed(true);setError(e instanceof Error?e.message:String(e));}
     finally{setLoading(false);setChecking(false);}
   },[repo]);
@@ -41,6 +45,18 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
     setRemoval(null);setError('');setInfo('');
     setEdit({id:row.id,date,oldJP:period,newJP:period,note:''});
     requestAnimationFrame(()=>editorRef.current?.scrollIntoView({behavior:'smooth',block:'start'}));
+  };
+  const correctCategory=async(row:ApprovedLeaveEntry)=>{
+    const next=categoryDrafts[row.id]||row.absenceCategory;
+    if(next===row.absenceCategory)return;
+    const note=window.prompt(`Alasan koreksi kategori ${row.code} (minimal 5 karakter):`);
+    if(!note||note.trim().length<5)return;
+    setWorking(true);setError('');setInfo('');
+    try {await repo.setAbsenceCategory(row.id,next,note.trim());
+      setInfo(`Kategori ${row.code} diperbarui menjadi ${absenceCategoryLabel(next)} (audit tersimpan).`);
+      await load();await onChanged?.();
+    }catch(e){setError(e instanceof Error?e.message:String(e));}
+    finally{setWorking(false);}
   };
   const move=async()=>{
     if(!edit||edit.newJP===edit.oldJP||!edit.note.trim())return;
@@ -107,7 +123,13 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
         const groups=approvedLeaveEditableSessions(row.slots);
         return <article key={row.id} className={`rounded-2xl border bg-white p-4 space-y-3 ${row.deleted?'opacity-60 border-rose-200':'border-slate-200'}`}>
           <div className="flex flex-wrap justify-between gap-2"><div><div className="flex flex-wrap items-center gap-2"><strong className="text-slate-900">{row.teacher}</strong><span className="text-[10px] font-mono text-slate-500">{row.code}</span>{row.deleted?<span className="text-[10px] bg-rose-100 text-rose-800 rounded px-2 py-0.5">SOFT DELETED</span>:<span className="text-[10px] bg-emerald-100 text-emerald-800 rounded px-2 py-0.5">APPROVED</span>}</div>
-            <p className="text-xs text-slate-500 mt-1">{row.dateStart}{row.dateEnd!==row.dateStart?` – ${row.dateEnd}`:''} • {row.reason}</p>{row.detail&&<p className="text-xs mt-1 text-slate-600">{row.detail}</p>}</div>
+            <p className="text-xs text-slate-500 mt-1">{row.dateStart}{row.dateEnd!==row.dateStart?` – ${row.dateEnd}`:''} • {row.reason}</p>{row.detail&&<p className="text-xs mt-1 text-slate-600">{row.detail}</p>}
+            <div className="mt-2 flex flex-wrap gap-2 items-center"><label className="text-xs text-slate-600">Jenis Izin
+              <select disabled={row.deleted||working} value={categoryDrafts[row.id]||row.absenceCategory} onChange={e=>setCategoryDrafts(v=>({...v,[row.id]:e.target.value as LeaveAbsenceCategory}))} className="ml-2 rounded border bg-white p-1.5">
+                {(['PERSONAL','SCHOOL_DUTY','UNCLASSIFIED'] as const).map(c=><option key={c} value={c}>{absenceCategoryLabel(c)}</option>)}
+              </select></label>
+              {!row.deleted&&(categoryDrafts[row.id]||row.absenceCategory)!==row.absenceCategory&&<button disabled={working} onClick={()=>void correctCategory(row)} className="text-xs rounded-lg bg-indigo-600 text-white px-2 py-1.5">Simpan Kategori (Audit)</button>}
+            </div></div>
             {!row.deleted&&<button onClick={()=>{setEdit(null);setRemoval({id:row.id,code:row.code,note:'',restore:false});}} className="flex items-center gap-1 rounded-lg border border-rose-200 text-rose-700 px-3 py-1.5 text-xs font-bold"><Trash2 className="w-3.5 h-3.5"/> <T>{"Soft Delete"}</T></button>}
           </div>
           {row.deleted&&<button type="button" onClick={()=>{setEdit(null);setRemoval({id:row.id,code:row.code,note:'',restore:true});}} className="rounded-lg border border-emerald-200 text-emerald-700 bg-emerald-50 px-3 py-1.5 text-xs font-bold"><T>{"Pulihkan (validasi ulang)"}</T></button>}

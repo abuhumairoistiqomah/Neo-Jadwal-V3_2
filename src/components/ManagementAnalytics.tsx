@@ -24,10 +24,15 @@ import {
   getCoverageHealthLabel,
   type ManagementAnalyticsPayload,
   type ManagementTeacherAnalyticsRow,
+  type ManagementTeacherCategoryActivity,
   sortTeacherActivityRows,
+  selectManagementCategoryTeacherRows,
+  labelTeacherCategoryCsv,
   type TeacherActivitySortKey,
   type TeacherActivitySortDirection,
 } from "../domain/managementAnalytics";
+import { absenceCategoryLabel, type LeaveAbsenceCategory } from '../domain/leaveClassificationV320';
+import { LeaveCategorySummaryV320Repository, type ManagementLeaveCategoryRow } from '../infrastructure/repositories/leaveCategorySummaryV320Repository';
 import { getSchoolTodayISO } from "../domain/date";
 import { ManagementAnalyticsRepository } from "../infrastructure/repositories/managementAnalyticsRepository";
 import { getErrorMessage } from "../domain/errorMessage";
@@ -91,7 +96,10 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
   const [preset, setPreset] = useState<Preset>("month");
   const [startDate, setStartDate] = useState(`${schoolToday.slice(0, 7)}-01`);
   const [endDate, setEndDate] = useState(schoolToday);
-  const [data, setData] = useState<ManagementAnalyticsPayload | null>(null);
+  const [data, setData] = useState<(ManagementAnalyticsPayload & { categoryActivity: ManagementTeacherCategoryActivity[] }) | null>(null);
+  const [leaveCategories,setLeaveCategories] = useState<ManagementLeaveCategoryRow[] | null>(null);
+  const [categoryError,setCategoryError] = useState('');
+  const [absenceFilter,setAbsenceFilter] = useState<'ALL'|LeaveAbsenceCategory>('ALL');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -159,9 +167,13 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
     setError("");
     try {
       const next = await new ManagementAnalyticsRepository().load(startDate, endDate);
+      const categories = await new LeaveCategorySummaryV320Repository().load(startDate,endDate);
       setData(next);
+      setLeaveCategories(categories);
+      setCategoryError('');
     } catch (err) {
-      setData(null); // Never display stale/partial statistics after an RPC failure.
+      setData(null); setLeaveCategories(null); setCategoryError('');
+      // Never display stale/partial statistics after an RPC failure.
       setError(getErrorMessage(err, "Analytics gagal dimuat."));
     } finally {
       setLoading(false);
@@ -177,9 +189,10 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
   const teacherRows = useMemo(() => {
     if (!data) return [];
     const query = search.trim().toLocaleLowerCase("id-ID");
-    const filtered = data.teachers.filter((row) => !query || row.teacherName.toLocaleLowerCase("id-ID").includes(query));
+    const categoryRows = selectManagementCategoryTeacherRows(data.teachers, data.categoryActivity, absenceFilter);
+    const filtered = categoryRows.filter((row) => !query || row.teacherName.toLocaleLowerCase("id-ID").includes(query));
     return sortTeacherActivityRows(filtered, teacherSort, sortDirection);
-  }, [data, search, teacherSort, sortDirection]);
+  }, [data, search, teacherSort, sortDirection, absenceFilter]);
 
   // Only geometry changes trigger a render. ResizeObserver also catches font/layout changes.
   // Hook runs again when the report first mounts after its asynchronous load.
@@ -223,12 +236,12 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
 
   const exportCsv = () => {
     if (!data) return;
-    const csv = `\uFEFF${buildTeacherAnalyticsCsv(teacherRows)}`;
+    const csv = `\uFEFF${labelTeacherCategoryCsv(buildTeacherAnalyticsCsv(teacherRows), absenceFilter)}`;
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const href = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = href;
-    a.download = `management-analytics_${data.dateStart}_${data.dateEnd}.csv`;
+    a.download = `management-analytics_${absenceFilter.toLowerCase()}_${data.dateStart}_${data.dateEnd}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -409,10 +422,29 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
 
           <div className="grid gap-5 xl:grid-cols-3">
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
+                  <div className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50 p-3 space-y-2">
+                    <div className="font-black text-sm text-indigo-950">V3.20 • Jenis Ketidaktersediaan Mengajar</div>
+                    <label className="text-xs font-semibold text-slate-700">Jenis Izin
+                      <select className="ml-2 rounded-lg border bg-white p-2 text-xs" value={absenceFilter}
+                        onChange={e=>setAbsenceFilter(e.target.value as 'ALL'|LeaveAbsenceCategory)}>
+                        <option value="ALL">Semua Jenis</option>
+                        {(['PERSONAL','SCHOOL_DUTY','UNCLASSIFIED'] as const).map(c=><option key={c} value={c}>{absenceCategoryLabel(c)}</option>)}
+                      </select>
+                    </label>
+                    {categoryError ? <p role="alert" className="text-xs text-rose-800">{categoryError}. Jalankan migration V3.20; angka kategori tidak tersedia, bukan nol.</p> :
+                      leaveCategories ? <div className="flex flex-wrap gap-2">
+                        {leaveCategories.filter(r=>absenceFilter==='ALL'||r.category===absenceFilter).map(row=><div key={row.category} className="rounded-lg bg-white border px-3 py-2 text-xs">
+                          <div className="font-bold">{absenceCategoryLabel(row.category)}</div>
+                          <strong>{row.teachingJp} JP mengajar terdampak</strong> • {row.otherJp} JP0/Free • {row.days} tanggal
+                        </div>)}
+                        {!leaveCategories.some(r=>absenceFilter==='ALL'||r.category===absenceFilter)&&<p className="text-xs">Tidak ada record dengan kategori ini pada periode terpilih.</p>}
+                      </div> : <p className="text-xs">Memuat breakdown kategori...</p>}
+                    <p className="text-[11px] text-indigo-900">Pilihan kategori kini mengatur JP/hari ketidaktersediaan pada tabel dan CSV guru di bawah. JP mengajar efektif tetap dihitung independen; tugas sekolah bukan JP mengajar fiktif. Kategori bersumber dari izin approved, penugasan resmi dan histori impor yang sudah diklasifikasikan.</p>
+                  </div>
               <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="font-black text-slate-900">Beban Operasional Guru</h2>
-                  <p className="text-xs text-slate-500">Akumulasi guru per rentang analisis. Klik judul kolom untuk mengurutkan (↑/↓).</p>
+                  <p className="text-xs text-slate-500">Kategori: {absenceFilter === 'ALL' ? 'Semua Jenis' : absenceCategoryLabel(absenceFilter)}. JP ketidaktersediaan dan persentase mengikuti pilihan; guru dummy dikecualikan. Klik judul untuk mengurutkan (↑/↓).</p>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <div className="relative">
@@ -448,11 +480,11 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
                         </button>
                       </th>
                       {sortableHeading('Total JP Mengajar Efektif','effectiveTeachingJp','JP1–6 dari jadwal efektif, termasuk badal mengajar; satu guru/tanggal/JP dihitung sekali.')}
-                      {sortableHeading('Total JP Izin','totalLeaveJp','JP1–6 izin mengajar APPROVED dan izin legacy; FREE, JP0, tugas resmi non-mengajar tidak dihitung.')}
+                      {sortableHeading(absenceFilter === 'ALL' ? 'Total JP Tidak Mengajar' : `JP ${absenceCategoryLabel(absenceFilter)}`, 'totalLeaveJp', 'JP1–6 ketidaktersediaan mengajar berdasarkan kategori terpilih; izin approved, histori, dan tugas sekolah resmi. Tidak termasuk FREE/JP0.')}
                       {sortableHeading('Total Hari Mengajar Efektif','effectiveTeachingDays','Jumlah tanggal unik dengan minimal satu JP mengajar efektif.')}
-                      {sortableHeading('Total Hari Izin','totalLeaveDays','Jumlah tanggal unik dengan izin tercatat, termasuk hari izin yang hanya memiliki JP FREE.')}
+                      {sortableHeading('Total Hari Terdampak','totalLeaveDays','Tanggal unik yang terdampak ketidaktersediaan dalam kategori terpilih; termasuk FREE/JP0.')}
                       {sortableHeading('Persentase JP Mengajar','teachingSharePct','JP mengajar efektif ÷ (JP mengajar efektif + JP izin) × 100%.')}
-                      {sortableHeading('Persentase JP Izin','leaveSharePct','JP izin ÷ (JP mengajar efektif + JP izin) × 100%.')}
+                      {sortableHeading('Persentase JP Tidak Mengajar','leaveSharePct','JP terdampak kategori terpilih ÷ (JP mengajar efektif + JP terdampak) × 100%.')}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white">
@@ -491,7 +523,7 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
           </div>
 
           <section className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 text-xs leading-relaxed text-indigo-900">
-            <strong>Definisi angka:</strong> Tabel Beban Operasional Guru menghitung JP1–6 dari jadwal efektif dan badal mengajar, lalu mengecualikan izin serta tugas non-mengajar yang tercatat. Kelas gabung dihitung satu JP per guru/tanggal/JP. JP izin hanya periode TEACHING APPROVED/legacy, sedangkan hari izin dapat mencakup FREE. Persentase = bagian dari (JP Mengajar Efektif + JP Izin), bukan persentase kehadiran absensi biometrik. Angka bergantung pada akurasi penugasan yang tercatat. Jika penyebut nol ditampilkan —. FREE tetap dihitung sebagai ketidakhadiran tetapi tidak masuk denominator coverage. JP-0 Homeroom masuk coverage namun tidak wajib tugas. Badal kelas gabung dideduplikasi per guru izin + tanggal + JP. Request yang ditolak/dibatalkan hanya muncul di status pengajuan dan tidak dihitung sebagai fakta ketidakhadiran.
+            <strong>Definisi angka:</strong> JP Mengajar Efektif berasal dari RPC V3.18; JP Tidak Mengajar berasal dari RPC kategori V3.20 RC1.2 untuk izin approved, OFFICIAL_DUTY, dan histori legacy/manual. Pemilihan Jenis Izin mengubah kolom JP/Hari Tidak Mengajar, persentase, urutan, dan ekspor CSV; tidak mengubah JP Mengajar Efektif. Setiap guru/tanggal/JP deduplikasi terlebih dahulu; ALL menghitung hari unik lintas kategori. Persentase = JP Tidak Mengajar terpilih ÷ (JP Mengajar Efektif + JP Tidak Mengajar terpilih), bukan absensi fisik. Entri guru dummy tidak ditampilkan dalam tabel maupun rekap kategori. Delapan KPI ringkasan lama di atas tetap menggunakan sumber V3.14 dan tidak otomatis berubah ketika memilih Jenis Izin; indikator tersebut adalah metrik berbeda.
           </section>
         </>
       ) : null}

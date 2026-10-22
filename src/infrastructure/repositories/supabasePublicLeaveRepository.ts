@@ -66,7 +66,7 @@ export class SupabasePublicLeaveRepository implements PublicLeaveRepository {
   async createEvidenceDraft(payload: PublicLeaveSubmissionPayload, file: File): Promise<PendingManagementEvidence> {
     const extension = evidenceExtension(file);
     const client = requireSupabaseClient();
-    const { data, error } = await client.rpc("ejadwal_submit_public_leave_request_v4", {
+    const { data, error } = await client.rpc("ejadwal_submit_public_leave_request_v320", {
       ...payload, p_evidence_extension: extension,
     });
     if (error) {
@@ -130,7 +130,7 @@ export class SupabasePublicLeaveRepository implements PublicLeaveRepository {
 export async function submitStaffLeaveRequest(
   payload: PublicLeaveSubmissionPayload, approveNow: boolean, authorizationNote: string,
 ): Promise<PublicLeaveSubmitResult> {
-  const {data,error}=await requireSupabaseClient().rpc('ejadwal_submit_staff_leave_v1',{
+  const {data,error}=await requireSupabaseClient().rpc('ejadwal_submit_staff_leave_v320',{
     ...payload,p_approve_now:approveNow,p_authorization_note:authorizationNote.trim()||null,
   });
   if(error) throw new Error(`Pengajuan staf gagal: ${error.message}`);

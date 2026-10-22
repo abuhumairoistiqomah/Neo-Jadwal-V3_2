@@ -12,6 +12,8 @@ import {
 } from "./schedule/effectiveSchedule";
 import { groupInvalScheduleItems } from "./inval/sessionGrouping";
 
+import type { NewLeaveAbsenceCategory } from "./leaveClassificationV320";
+
 export type LeaveRequestType = "FULL_DAY" | "PARTIAL";
 export type LeavePeriodType = "TEACHING" | "FREE";
 
@@ -56,6 +58,7 @@ export interface PublicLeaveSubmissionInput {
   teacherName: string;
   scheduleDate: string;
   requestType: LeaveRequestType;
+  absenceCategory?: NewLeaveAbsenceCategory;
   reason: string;
   detail?: string;
   slots: LeaveRequestPeriodDraft[];
@@ -66,6 +69,7 @@ export interface PublicLeaveSubmissionPayload {
   p_teacher_name: string;
   p_schedule_date: string;
   p_request_type: LeaveRequestType;
+  p_absence_category: NewLeaveAbsenceCategory;
   p_reason: string;
   p_detail: string | null;
   /** Teaching assignments only; FREE periods deliberately have no coverage slot. */
@@ -310,6 +314,9 @@ export function buildPublicLeaveSubmission(
   if (input.requestType !== "FULL_DAY" && input.requestType !== "PARTIAL") {
     throw new Error("Jenis izin tidak valid.");
   }
+  if (input.absenceCategory !== undefined && !['PERSONAL','SCHOOL_DUTY'].includes(input.absenceCategory)) {
+    throw new Error("Kategori izin harus Urusan Pribadi atau Tugas Sekolah.");
+  }
   if (!reason) throw new Error("Alasan izin wajib diisi.");
   if (!Array.isArray(input.slots) || input.slots.length === 0) {
     throw new Error("Pilih minimal satu JP yang terdampak.");
@@ -386,6 +393,7 @@ export function buildPublicLeaveSubmission(
     p_teacher_name: teacherName,
     p_schedule_date: scheduleDate,
     p_request_type: input.requestType,
+    p_absence_category: input.absenceCategory ?? "PERSONAL",
     p_reason: reason,
     p_detail: detail || null,
     p_slots: teachingSlots,

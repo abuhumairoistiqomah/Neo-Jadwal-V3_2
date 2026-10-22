@@ -9,6 +9,7 @@ import type {
 import type { LeaveApprovalRepository } from "./leaveApprovalRepository";
 import { requireSupabaseClient } from "../supabase/client";
 import { MANAGEMENT_EVIDENCE_BUCKET } from "../../domain/managementLeaveEvidence";
+import { normalizeAbsenceCategory } from "../../domain/leaveClassificationV320";
 import { getSchoolTodayISO } from "../../domain/date";
 import { getErrorMessage, isMissingRpcError } from "../../domain/errorMessage";
 
@@ -27,7 +28,7 @@ export class SupabaseLeaveApprovalRepository implements LeaveApprovalRepository 
     const safeLimit = Math.max(1, Math.min(250, Math.trunc(limit)));
     const { data: requests, error: requestError } = await client
       .from("leave_requests")
-      .select("id,teacher_id,date_start,date_end,reason,detail,status,submitted_at,request_code,request_type,evidence_path,evidence_uploaded_at")
+      .select("id,teacher_id,date_start,date_end,reason,detail,status,submitted_at,request_code,request_type,absence_category,evidence_path,evidence_uploaded_at")
       .eq("status", "SUBMITTED")
       .order("submitted_at", { ascending: true })
       .limit(safeLimit);
@@ -138,6 +139,7 @@ export class SupabaseLeaveApprovalRepository implements LeaveApprovalRepository 
       teacherName: teacherMap.get(String(row.teacher_id || "")) || "Guru tidak ditemukan",
       scheduleDate: String(row.date_start || ""),
       requestType: String(row.request_type || "PARTIAL"),
+      absenceCategory: normalizeAbsenceCategory(row.absence_category),
       reason: String(row.reason || ""),
       detail: row.detail ? String(row.detail) : null,
       status: String(row.status || "SUBMITTED"),
