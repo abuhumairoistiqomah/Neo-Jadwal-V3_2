@@ -280,7 +280,9 @@ export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({
     if (!activeWaitingSession || !isStaff || savingWaiting) throw new Error("Sesi izin tidak aktif atau penyimpanan sedang berlangsung.");
     const session = activeWaitingSession;
     const freshWaiting = await repository.listWaitingCoverage(1000);
-    const assignments = matchApprovedWaitingAssignments(session, freshWaiting, newLogs);
+    const assignments = matchApprovedWaitingAssignments(
+      session, freshWaiting, newLogs, metadata?.subjectOverridesByRow ?? [],
+    );
     const resolved = assignments.map((entry) => {
       const teacher = teachers.find((person) => person.nama.trim().toLocaleLowerCase("id-ID") === entry.substituteName.trim().toLocaleLowerCase("id-ID"));
       if (!teacher?.id || teacher.id === session.absentTeacherId) {
@@ -289,28 +291,34 @@ export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({
       return { ...entry, teacherId: teacher.id };
     });
     setSavingWaiting(true);
-    let saved = 0;
     try {
-      for (const entry of resolved) {
-        await assignmentRepository.replaceSubstitute({
+      // Atomic session save: reassign the EXISTING approved coverage identities,
+      // then update dated subjects for the same class/JP. Never create a new leave.
+      await assignmentRepository.assignApprovedWaitingSession({
+        assignments: resolved.map((entry) => ({
           coverageSlotId: entry.coverageSlotId,
           substituteTeacherId: entry.teacherId,
+          expectedSubject: entry.expectedSubject,
+          subject: entry.subject,
           constraintIds: metadata?.constraintOverrideIdsByRow?.[entry.inputIndex] ?? [],
-          overrideNote: metadata?.overrideNote || "Penugasan dari Waiting List Persetujuan Izin",
-        });
-        saved++;
-      }
-      setActiveWaitingSession(null);
-      setMessage(`${session.requestCode}: ${saved} kelas sudah mendapat guru badal. Tugas izin dan histori tetap tersimpan.`);
-      await loadData();
-      await onChanged?.();
+        })),
+        overrideNote: metadata?.overrideNote || "Penugasan dari Waiting List Persetujuan Izin",
+      });
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      // This RPC writes per coverage slot; report partial success explicitly.
-      await loadData().catch(() => {});
-      throw new Error(`${saved}/${resolved.length} kelas sempat tersimpan. Tutup dan refresh Waiting List sebelum mencoba lagi. ${detail}`);
+      throw new Error(`Sesi Waiting List tidak disimpan (transaksi dibatalkan). Refresh jika jadwal berubah. ${detail}`);
     } finally {
       setSavingWaiting(false);
+    }
+    // The DB write already COMMITTED. Never report a rollback if UI refresh fails.
+    setActiveWaitingSession(null);
+    setMessage(`${session.requestCode}: ${resolved.length} kelas sudah mendapat guru badal. Mapel efektif (jika diedit) dan tugas guru izin tersimpan.`);
+    try {
+      await loadData();
+      await onChanged?.();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setMessage(`${session.requestCode}: ${resolved.length} kelas sudah TERSIMPAN, tetapi refresh UI gagal: ${detail}. Segarkan halaman; jangan simpan ulang.`);
     }
   };
 

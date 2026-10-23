@@ -112,6 +112,10 @@ export interface JadwalInsidentalItem {
   selesai?: string;
   /** True when Supabase explicitly SET a teacher team; empty trailing positions must not inherit master teachers. */
   replaceTeachers?: boolean;
+  /** Technical provenance, never shown as incidental description. */
+  copiedFromIncidentalId?: string;
+  /** Dated class-mode flag was actually set (false is a valid override). */
+  classModeOverridden?: boolean;
 }
 
 export interface AdminAccount {

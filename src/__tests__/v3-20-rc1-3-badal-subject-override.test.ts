@@ -73,10 +73,10 @@ test("RC1.3 recommendation invalidation reacts to edited subject (but not task t
   assert.equal(base, buildRecommendationDependencyKey(rows.map((row) => ({...row,tugas: "Halaman 999"}))));
 });
 
-test("RC1.3 UI exposes manual subject editor only on general admin input route", () => {
+test("RC1.4 subject editor is available for general admin and approved Waiting, not official-duty flow", () => {
   const ui = src("src/components/InputGuruPengganti.tsx");
   assert.match(ui, /Edit Mapel/);
-  assert.match(ui, /!approvedWaitingSession && !officialDutySlots && !readOnlyPreview && row\.jam_ke > 0/);
+  assert.match(ui, /!officialDutySlots && !readOnlyPreview && row\.jam_ke > 0/);
   assert.match(ui, /subjectOverridesByRow: expandedRows\.map/);
   assert.match(ui, /Mapel asli:/);
 });

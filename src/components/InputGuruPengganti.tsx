@@ -1757,7 +1757,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
           Penyimpanan dilakukan sebagai OFFICIAL_DUTY, bukan izin pribadi.
         </div>}
         {approvedWaitingSession && <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900 mb-5">
-          <strong>Badal Pengajuan Izin {approvedWaitingSession.requestCode}.</strong> Guru, tanggal, JP, dan kelas dikunci sesuai Waiting List. Rekomendasi gender, jadwal harian, dan beban mingguan tetap aktif. Tugas guru izin hanya dapat dilihat, tidak diubah.
+          <strong>Badal Pengajuan Izin {approvedWaitingSession.requestCode}.</strong> Guru, tanggal, JP, dan kelas dikunci sesuai Waiting List. Mapel saat badal dapat diedit tanpa mengubah jadwal master atau tugas guru izin. Rekomendasi guru mengikuti mapel hasil edit.
         </div>}
         {/* Step 1: Input Permohonan Form */}
         {!readOnlyPreview && !dutyReady && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
@@ -2099,7 +2099,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="font-bold text-gray-800 text-base">{row.subjectOverride?.trim() || row.mapel}</h4>
-                          {!approvedWaitingSession && !officialDutySlots && !readOnlyPreview && row.jam_ke > 0 && (
+                          {!officialDutySlots && !readOnlyPreview && row.jam_ke > 0 && (
                             <button type="button" onClick={() => toggleSubjectEditor(index)}
                               className="rounded-lg border border-indigo-200 px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
                               aria-label={`Edit mata pelajaran JP ${row.jam_ke} ${row.kelas}`}>
@@ -2112,7 +2112,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                             </span>
                           )}
                         </div>
-                        {editingSubjectRows.includes(index) && !approvedWaitingSession && !officialDutySlots && !readOnlyPreview && row.jam_ke > 0 && (
+                        {editingSubjectRows.includes(index) && !officialDutySlots && !readOnlyPreview && row.jam_ke > 0 && (
                           <div className="mt-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3 space-y-2">
                             <label htmlFor={`inval-mapel-${index}`} className="block text-xs font-bold text-indigo-900">
                               Mata pelajaran saat badal
@@ -2124,7 +2124,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                               className="w-full rounded-lg border border-indigo-200 bg-white p-2 text-sm text-gray-900"
                               placeholder="Ketik nama mata pelajaran aktual" />
                             <datalist id={`inval-mapel-options-${index}`}>
-                              {[...new Set(schedules.map((s) => String(s.mapel || "").trim()).filter(Boolean))]
+                              {[...new Set<string>(schedules.map((s) => String(s.mapel || "").trim()).filter(Boolean))]
                                 .sort((a, b) => a.localeCompare(b, "id-ID"))
                                 .map((subject) => <option key={subject} value={subject} />)}
                             </datalist>

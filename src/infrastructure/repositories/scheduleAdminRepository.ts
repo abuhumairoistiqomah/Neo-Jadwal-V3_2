@@ -183,6 +183,34 @@ export class ScheduleAdminRepository {
     return Array.isArray(data) ? data.map(String) : [];
   }
 
+  /** Atomic date-specific copy of lesson + optionally source teacher team, always preserving target room. */
+  async copyIncidentalLessons(input: {
+    date: string;
+    sourceClassId: string;
+    periods: number[];
+    targetClassIds: string[];
+    overwriteExisting: boolean;
+    copySourceTeam: boolean;
+    copyTimes: boolean;
+  }): Promise<{ copied: number; incidentalIds: string[] }> {
+    const client = requireSupabaseClient();
+    const { data, error } = await client.rpc("ejadwal_copy_incidental_lessons_v320_rc152", {
+      p_schedule_date: input.date,
+      p_source_class_id: input.sourceClassId,
+      p_periods: input.periods,
+      p_target_class_ids: input.targetClassIds,
+      p_overwrite_existing: input.overwriteExisting,
+      p_copy_source_team: input.copySourceTeam,
+      p_copy_times: input.copyTimes,
+    });
+    if (error) throw error;
+    const result = (data || {}) as { copied?: number; incidental_ids?: unknown };
+    return {
+      copied: Number(result.copied || 0),
+      incidentalIds: Array.isArray(result.incidental_ids) ? result.incidental_ids.map(String) : [],
+    };
+  }
+
   async upsertScheduleIncidental(input: ScheduleIncidentalEditInput): Promise<string> {
     const client = requireSupabaseClient();
     const { data, error } = await client.rpc("ejadwal_upsert_schedule_incidental_v3", {

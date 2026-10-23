@@ -35,14 +35,14 @@ test("existing WAITING coverage ids are matched one-to-one, preserving leave ide
   assert.throws(()=>matchApprovedWaitingAssignments(session,waitingRows,proposed.map((row)=>({...row,tanggal:"2026-10-20"}))),/sesuai/);
 });
 
-test("approval uses same smart recommender and existing audited substitute RPC", () => {
+test("approval uses smart recommender and atomic audited Waiting List RPC", () => {
   const approval = readFileSync("src/components/LeaveApprovalAdmin.tsx","utf8");
   const smart = readFileSync("src/components/InputGuruPengganti.tsx","utf8");
   assert.match(approval, /<InputGuruPengganti/);
   assert.match(approval, /taskOwnership="LEAVE_TEACHER"/);
   assert.match(approval, /approvedWaitingSession=\{activeWaitingSession\}/);
   assert.match(approval, /matchApprovedWaitingAssignments/);
-  assert.match(approval, /assignmentRepository\.replaceSubstitute/);
+  assert.match(approval, /assignmentRepository\.assignApprovedWaitingSession/);
   assert.doesNotMatch(approval,/href=\{buildBadalProcessingUrl\(session\)\}/);
   assert.match(smart,/genderPreferenceRank/);
   assert.match(smart,/teacherDailyLoads/);

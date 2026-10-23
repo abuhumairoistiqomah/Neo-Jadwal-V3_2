@@ -30,7 +30,8 @@ export function matchApprovedWaitingAssignments(
   session: WaitingBadalSession,
   freshWaitingRows: WaitingCoverageRow[],
   proposedLogs: Omit<LogIzinItem, "id">[],
-): Array<{ coverageSlotId: string; substituteName: string; inputIndex: number }> {
+  subjectOverridesByRow: Array<{ originalSubject: string; subject: string } | null> = [],
+): Array<{ coverageSlotId: string; substituteName: string; inputIndex: number; expectedSubject: string; subject: string }> {
   if (!session.leaveRequestId || !session.coverageSlotIds.length) {
     throw new Error("Tidak ada permohonan izin yang disetujui untuk penugasan ini.");
   }
@@ -58,20 +59,38 @@ export function matchApprovedWaitingAssignments(
   if (pending.size !== session.classCodes.length || session.classCodes.some((cls) => !pending.has(norm(cls)))) {
     throw new Error("Kelas pada Waiting List sudah berubah.");
   }
-  const matched: Array<{ coverageSlotId: string; substituteName: string; inputIndex: number }> = [];
+  if (subjectOverridesByRow.length > 0 && subjectOverridesByRow.length !== proposedLogs.length) {
+    throw new Error("Jumlah perubahan mapel tidak sesuai slot Waiting List.");
+  }
+  const matched: Array<{ coverageSlotId: string; substituteName: string; inputIndex: number; expectedSubject: string; subject: string }> = [];
   for (let index = 0; index < proposedLogs.length; index++) {
     const log = proposedLogs[index];
     const row = pending.get(norm(log.kelas));
+    const subjectOverride = subjectOverridesByRow[index] ?? null;
+    const expectedSubject = String(row?.subject || "").trim();
+    const actualSubject = String(log.mapel || "").trim();
+    if (subjectOverride && (
+      norm(subjectOverride.originalSubject) !== norm(expectedSubject)
+      || norm(subjectOverride.subject) !== norm(actualSubject)
+    )) {
+      throw new Error("Perubahan mapel tidak sesuai identitas Waiting List yang disetujui.");
+    }
     if (!row || norm(log.guru_izin) !== norm(session.absentTeacherName)
       || log.tanggal !== session.scheduleDate || Number(log.jam_ke) !== session.period
-      || norm(log.mapel) !== norm(row.subject) || norm(log.alasan) !== norm(session.reason || "Izin")) {
+      || (!subjectOverride && norm(actualSubject) !== norm(expectedSubject))
+      || !actualSubject || actualSubject.length > 120
+      || (subjectOverride && (session.period < 1 || session.period > 6))
+      || norm(log.alasan) !== norm(session.reason || "Izin")) {
       throw new Error("Hasil pemilih badal tidak sesuai sesi izin yang disetujui.");
     }
     if (!String(log.guru_pengganti || "").trim() || norm(log.guru_pengganti) === norm(log.guru_izin)) {
       throw new Error("Guru badal wajib dipilih dan berbeda dari guru yang izin.");
     }
     pending.delete(norm(log.kelas));
-    matched.push({coverageSlotId: row.id, substituteName: log.guru_pengganti, inputIndex: index});
+    matched.push({
+      coverageSlotId: row.id, substituteName: log.guru_pengganti, inputIndex: index,
+      expectedSubject, subject: actualSubject,
+    });
   }
   if (pending.size > 0) throw new Error("Masih ada kelas Waiting List yang belum dipilihkan badal.");
   return matched;

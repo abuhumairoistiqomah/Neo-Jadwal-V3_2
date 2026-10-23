@@ -84,6 +84,7 @@ export interface ScheduleIncidentalRow {
   updated_at?: string | null;
   reason?: string | null;
   incidental_type?: string | null;
+  copied_from_incidental_id?: string | null;
   deleted_at?: string | null;
 }
 
@@ -346,6 +347,8 @@ export function mapIncidentalRows(args: {
       keterangan_khusus: row.override_special_note || "",
       alasan: row.reason || "",
       tipe_insidental: row.incidental_type || row.kind || "",
+      copiedFromIncidentalId: row.copied_from_incidental_id || undefined,
+      classModeOverridden: row.override_class_mode != null || row.override_is_combined != null,
       kind: row.kind || "OVERRIDE",
       replaceTeachers: (overridesByIncidental.get(row.id) || []).length > 0,
     };

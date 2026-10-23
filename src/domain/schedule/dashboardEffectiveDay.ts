@@ -59,3 +59,28 @@ export function selectOperationalTeacherSchedules<
   return items.filter((item) =>
     !item.isSuppressedByAcademicCalendar || !activePeriods.has(Number(item.jam_ke)));
 }
+
+/**
+ * A peer on today's dashboard must be actually available for this lesson,
+ * rather than simply being a name in the weekly master teacher1..teacher6.
+ * Coverage logs have already removed the absent teacher and added their badal
+ * in `effectiveTeachers`. This view deliberately does not modify master rows.
+ */
+export function dashboardAvailableTeamTeachingPeers(
+  items: Pick<EffectiveScheduleItem, "effectiveTeachers">[],
+  selectedTeacher: string,
+): string[] {
+  const selected = selectedTeacher.trim().toLocaleLowerCase();
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of items) {
+    for (const value of item.effectiveTeachers || []) {
+      const name = value.trim();
+      const key = name.toLocaleLowerCase();
+      if (!key || key === selected || seen.has(key)) continue;
+      seen.add(key);
+      result.push(name);
+    }
+  }
+  return result;
+}

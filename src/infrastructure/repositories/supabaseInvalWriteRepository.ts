@@ -36,6 +36,36 @@ export class SupabaseInvalWriteRepository implements InvalWriteRepository {
     return normalizeWriteResult(data);
   }
 
+  /** RC1.4: one transaction for ALL selected classes of an approved Waiting session. */
+  async assignApprovedWaitingSession(input: {
+    assignments: Array<{
+      coverageSlotId: string;
+      substituteTeacherId: string;
+      expectedSubject: string;
+      subject: string;
+      constraintIds?: string[];
+    }>;
+    overrideNote?: string;
+  }): Promise<{ coverageSlotIds: string[]; requestId: string }> {
+    const client = requireSupabaseClient();
+    const { data, error } = await client.rpc("ejadwal_assign_waiting_badal_v320_rc14", {
+      p_rows: input.assignments.map((entry) => ({
+        coverage_slot_id: entry.coverageSlotId,
+        substitute_teacher_id: entry.substituteTeacherId,
+        expected_subject: entry.expectedSubject,
+        subject: entry.subject,
+        constraint_ids: entry.constraintIds ?? [],
+      })),
+      p_override_note: input.overrideNote ?? null,
+    });
+    if (error) throw new Error(`Gagal menyimpan Waiting List Badal: ${error.message}`);
+    const row = asObject(data);
+    return {
+      requestId: String(row.request_id || ""),
+      coverageSlotIds: Array.isArray(row.coverage_slot_ids) ? row.coverage_slot_ids.map(String) : [],
+    };
+  }
+
   async updateAssignment(input: {
     coverageSlotId: string;
     substituteTeacherId: string;

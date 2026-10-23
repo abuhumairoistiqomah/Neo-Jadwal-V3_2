@@ -1,3 +1,4 @@
+import { IncidentalCopyPanel } from "./IncidentalCopyPanel";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, CalendarPlus2, Edit3, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import type { JadwalInsidentalItem, KalenderAkademikItem, LogIzinItem, ScheduleItem } from "../domain/models";
@@ -35,6 +36,9 @@ function labelDate(value: string): string {
 export const IncidentalScheduleAdmin: React.FC<Props> = ({ schedules, incidentals, logs = [], kalenderAkademik = [], onChanged, onBack }) => {
   const repo = useMemo(() => new ScheduleAdminRepository(), []);
   const editorRef = useRef<HTMLElement>(null);
+  const copiedListRef = useRef<HTMLElement>(null);
+  const [copiedIncidentalIds, setCopiedIncidentalIds] = useState<string[]>([]);
+  const [showCopiedHistory, setShowCopiedHistory] = useState(false);
   const [auth, setAuth] = useState<CurrentUserContext | null>(null);
   const [context, setContext] = useState<ScheduleAdminContext | null>(null);
   const [loading, setLoading] = useState(true);
@@ -255,7 +259,11 @@ export const IncidentalScheduleAdmin: React.FC<Props> = ({ schedules, incidental
     setEndTime(timeForInput(row.selesai || actualMaster?.selesai || (JAM_TIME_MAP[Number(row.jam_ke)] || "").split(" - ")[1]));
     setRoomId(row.ruangan || "");
     setCombined(["ya", "iya", "combined"].includes(normalizeImportKey(row.kelasgabung)));
-    const names = [row.guru1, row.guru2, row.guru3, row.guru4, row.guru5, row.guru6].filter(Boolean).map(String);
+    // Copied records from RC1.5 may inherit teachers from the target master.
+    // Display their effective team so old copies can still be edited safely.
+    const teacherSource = row.replaceTeachers ? row : actualMaster || row;
+    const names = [teacherSource.guru1, teacherSource.guru2, teacherSource.guru3,
+      teacherSource.guru4, teacherSource.guru5, teacherSource.guru6].filter(Boolean).map(String);
     setTeacherIds(names.map((name) => context.teachers.find((teacher) => [teacher.full_name, teacher.short_name, teacher.legacy_name].some((candidate) => normalizeImportKey(candidate) === normalizeImportKey(name)))?.id).filter(Boolean) as string[]);
     setSpecialNote(row.keterangan_khusus || "");
     setReason(row.alasan || "");
@@ -278,10 +286,25 @@ export const IncidentalScheduleAdmin: React.FC<Props> = ({ schedules, incidental
     () => incidentals.filter((row) => isPastIncidentalDate(row.tanggal, schoolToday)).length,
     [incidentals, schoolToday]
   );
-  const displayedIncidentals = useMemo(
-    () => filterIncidentalHistory(sortedIncidentals, schoolToday, showPastIncidentals),
-    [sortedIncidentals, schoolToday, showPastIncidentals]
-  );
+  const copiedHistoryCount = useMemo(() => incidentals.filter(row =>
+    (Boolean(row.copiedFromIncidentalId) || /^COPY_INCIDENTAL_RC15/i.test(row.tipe_insidental || ""))
+  ).length, [incidentals]);
+  const displayedIncidentals = useMemo(() => {
+    if (copiedIncidentalIds.length > 0) {
+      const copied = new Set(copiedIncidentalIds);
+      return sortedIncidentals.filter(row => copied.has(row.id));
+    }
+    if (showCopiedHistory) {
+      // Administrative history filter deliberately includes older dates.
+      return sortedIncidentals.filter(row => (Boolean(row.copiedFromIncidentalId) || /^COPY_INCIDENTAL_RC15/i.test(row.tipe_insidental || "")));
+    }
+    return filterIncidentalHistory(sortedIncidentals, schoolToday, showPastIncidentals);
+  }, [sortedIncidentals, schoolToday, showPastIncidentals, copiedIncidentalIds, showCopiedHistory]);
+  const handleCopied = (ids: string[]) => {
+    setShowCopiedHistory(false);
+    setCopiedIncidentalIds(ids);
+    requestAnimationFrame(() => copiedListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
 
   return <div className="space-y-6">
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -332,18 +355,30 @@ export const IncidentalScheduleAdmin: React.FC<Props> = ({ schedules, incidental
       <div className="flex justify-end"><button disabled={!canManage || busy || loading} onClick={()=>void save()} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-3 text-sm font-black text-white disabled:opacity-40">{busy?<Loader2 className="w-4 h-4 animate-spin"/>:<Save className="w-4 h-4"/>}{editingId?"Simpan Revisi":"Tambah Jadwal Insidental"}</button></div>
     </section>
 
-    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+    <IncidentalCopyPanel schedules={schedules} incidentals={incidentals} logs={logs} context={context} canManage={canManage} onChanged={onChanged} onCopied={handleCopied} />
+
+    <section ref={copiedListRef} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm scroll-mt-20">
       <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-black">Daftar Jadwal Insidental</h2>
           <p className="text-xs text-slate-500">Tanggal yang sudah lewat disembunyikan otomatis menurut waktu sekolah (Jakarta). Histori tetap tersimpan di Supabase.</p>
+          {copiedIncidentalIds.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-bold text-indigo-800" role="status">
+            <span className="rounded-lg bg-indigo-100 px-2 py-1">Hasil salin terbaru • {displayedIncidentals.length}/{copiedIncidentalIds.length} slot</span>
+            <button type="button" className="rounded-lg border border-indigo-200 bg-white px-2 py-1 hover:bg-indigo-50" onClick={() => setCopiedIncidentalIds([])}>Tampilkan semua jadwal</button>
+          </div>}
         </div>
-        <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-700">
-          <input type="checkbox" checked={showPastIncidentals} onChange={(event) => setShowPastIncidentals(event.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-violet-600" />
-          Lihat yang sudah lewat ({pastIncidentalCount})
-        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="button" className={`rounded-lg border px-3 py-1.5 text-xs font-black ${showCopiedHistory ? "border-indigo-400 bg-indigo-100 text-indigo-900" : "border-indigo-200 bg-white text-indigo-700"}`}
+            onClick={() => { setCopiedIncidentalIds([]); setShowCopiedHistory(value => !value); }}>
+            {showCopiedHistory ? "✓ Hanya hasil salin" : "Lihat hasil salin"} ({copiedHistoryCount})
+          </button>
+          <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-700">
+            <input type="checkbox" checked={showPastIncidentals} onChange={(event) => { setCopiedIncidentalIds([]); setShowCopiedHistory(false); setShowPastIncidentals(event.target.checked); }} className="h-4 w-4 rounded border-slate-300 accent-violet-600" />
+            Lihat yang sudah lewat ({pastIncidentalCount})
+          </label>
+        </div>
       </div>
-      <div className="space-y-3 p-5">{displayedIncidentals.length===0?<div className="py-8 text-center text-sm text-slate-400">{pastIncidentalCount > 0 && !showPastIncidentals ? "Tidak ada jadwal insidental hari ini atau mendatang. Centang ‘Lihat yang sudah lewat’ untuk melihat histori." : "Belum ada jadwal insidental."}</div>:displayedIncidentals.map((row)=><div key={row.id} className="flex flex-col gap-3 rounded-2xl border border-violet-100 bg-violet-50/30 p-4 lg:flex-row lg:items-center lg:justify-between"><div><div className="flex flex-wrap items-center gap-2"><span className="font-black text-slate-900">{row.kelas}</span><span className="rounded-lg bg-violet-100 px-2 py-1 text-[10px] font-black text-violet-800">{row.kind || "OVERRIDE"}</span></div><div className="mt-1 text-sm font-semibold text-slate-700">{labelDate(row.tanggal)} • JP {row.jam_ke}{row.mulai && row.selesai ? ` (${timeForInput(row.mulai)}–${timeForInput(row.selesai)})` : ""} • {row.mapel}</div><div className="mt-1 text-xs text-slate-500">{[row.guru1,row.guru2,row.guru3,row.guru4,row.guru5,row.guru6].filter(Boolean).join(" / ") || "Tanpa guru"}{row.alasan?` • ${row.alasan}`:""}</div></div><div className="flex gap-2"><button onClick={()=>startEdit(row)} className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black"><Edit3 className="w-4 h-4"/> Edit</button><button onClick={()=>void remove(row)} className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-700"><Trash2 className="w-4 h-4"/> <T>{"Hapus"}</T></button></div></div>)}</div></section>
+      <div className="space-y-3 p-5">{displayedIncidentals.length===0?<div className="py-8 text-center text-sm text-slate-400">{copiedIncidentalIds.length > 0 ? "Salinan sudah disimpan, tetapi belum muncul di snapshot. Klik Refresh Supabase." : pastIncidentalCount > 0 && !showPastIncidentals ? "Tidak ada jadwal insidental hari ini atau mendatang. Centang ‘Lihat yang sudah lewat’ untuk melihat histori." : "Belum ada jadwal insidental."}</div>:displayedIncidentals.map((row)=><div key={row.id} className="flex flex-col gap-3 rounded-2xl border border-violet-100 bg-violet-50/30 p-4 lg:flex-row lg:items-center lg:justify-between"><div><div className="flex flex-wrap items-center gap-2"><span className="font-black text-slate-900">{row.kelas}</span><span className="rounded-lg bg-violet-100 px-2 py-1 text-[10px] font-black text-violet-800">{row.kind || "OVERRIDE"}</span></div><div className="mt-1 text-sm font-semibold text-slate-700">{labelDate(row.tanggal)} • JP {row.jam_ke}{row.mulai && row.selesai ? ` (${timeForInput(row.mulai)}–${timeForInput(row.selesai)})` : ""} • {row.mapel}{["ya","iya","combined"].includes(normalizeImportKey(row.kelasgabung)) ? " • Kelas Gabung" : ""}</div><div className="mt-1 text-xs text-slate-500">{[row.guru1,row.guru2,row.guru3,row.guru4,row.guru5,row.guru6].filter(Boolean).join(" / ") || "Tanpa guru"}{row.alasan?` • ${row.alasan}`:""}</div></div><div className="flex gap-2"><button onClick={()=>startEdit(row)} className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black"><Edit3 className="w-4 h-4"/> Edit</button><button onClick={()=>void remove(row)} className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-700"><Trash2 className="w-4 h-4"/> <T>{"Hapus"}</T></button></div></div>)}</div></section>
     <style>{`.input{width:100%;border:1px solid #e2e8f0;border-radius:.75rem;padding:.65rem .8rem;font-size:.875rem;background:white;outline:none}.input:focus{border-color:#8b5cf6;box-shadow:0 0 0 3px rgba(139,92,246,.1)}`}</style>
   </div>;
 };

@@ -16,7 +16,7 @@ import { findAbsentTeacherCoverage, absentCoverageLabel } from "../domain/schedu
 import { collectPriorityDuties, resolveDisplacedTeacher } from "../domain/schedule/dutyResolution";
 import { getTeacherUnavailableStatus } from "../domain/dashboardTeacherUnavailable";
 import type { SubstituteConstraint } from "../domain/substituteAvailability";
-import { buildDashboardEffectiveDay, getDashboardClassSlotItems, selectOperationalTeacherSchedules, type DashboardEffectiveItem } from "../domain/schedule/dashboardEffectiveDay";
+import { buildDashboardEffectiveDay, dashboardAvailableTeamTeachingPeers, getDashboardClassSlotItems, selectOperationalTeacherSchedules, type DashboardEffectiveItem } from "../domain/schedule/dashboardEffectiveDay";
 import { 
   Search, Calendar, CalendarDays, BookOpen, Clock, Users, UserPlus, GraduationCap,
   History, BarChart2, Shield, User, ChevronRight, X, Table, ChevronDown, Bell, Eye, EyeOff, AlertTriangle, ClipboardCheck, Pencil 
@@ -1417,23 +1417,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             
                             {/* Other Teachers Badge List if other teachers are teaching */}
                             {!item.isInval && !item.isCancelledForKalender && (() => {
-                              const otherTeachersList: string[] = [];
-                              item.items.forEach(scItem => {
-                                const scTeachers = [
-                                  scItem.guru1,
-                                  scItem.guru2,
-                                  scItem.guru3,
-                                  scItem.guru4,
-                                  scItem.guru5,
-                                  scItem.guru6
-                                ].map(g => g?.trim()).filter(Boolean);
-                                
-                                scTeachers.forEach(tName => {
-                                  if (tName.toLowerCase() !== selectedTeacher.toLowerCase() && !otherTeachersList.includes(tName)) {
-                                    otherTeachersList.push(tName);
-                                  }
-                                });
-                              });
+                              // V3.20 RC1.5: use the effective team AFTER izin/badal.
+                              // The weekly guru1..guru6 still contain absent teachers for audit;
+                              // showing them as active peers resurrected Andika on Tsaqif's card.
+                              const otherTeachersList = dashboardAvailableTeamTeachingPeers(item.items, selectedTeacher);
 
                               if (otherTeachersList.length > 0) {
                                 return (
