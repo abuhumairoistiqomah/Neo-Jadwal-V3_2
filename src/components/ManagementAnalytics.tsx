@@ -39,6 +39,7 @@ import { getErrorMessage } from "../domain/errorMessage";
 import { getHorizontalScrollMetrics, getDraggedScrollLeft, syncHorizontalScroll } from "../domain/tableNavigation";
 
 import { T } from '../i18n/LanguageProvider';
+import { ManagementLeaveDaysAnalytics } from './ManagementLeaveDaysAnalytics';
 interface ManagementAnalyticsProps {
   onBack: () => void;
 }
@@ -93,6 +94,7 @@ function KpiCard(props: {
 
 export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack }) => {
   const schoolToday = getSchoolTodayISO();
+  const [activeAnalyticsTab, setActiveAnalyticsTab] = useState<'operations'|'days'>('operations');
   const [preset, setPreset] = useState<Preset>("month");
   const [startDate, setStartDate] = useState(`${schoolToday.slice(0, 7)}-01`);
   const [endDate, setEndDate] = useState(schoolToday);
@@ -265,10 +267,12 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
             <BarChart3 className="h-7 w-7 text-indigo-600" /> <T>{"Management Analytics"}</T>
           </h1>
           <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-500">
-            Ringkasan manajemen untuk izin, JP kehadiran, badal, kesiapan tugas, dan beban operasional guru. Kelas gabung dihitung sebagai satu unit badal per guru/tanggal/JP.
+            {activeAnalyticsTab === 'days'
+              ? 'Statistik hari ketidaktersediaan mengajar: perbandingan tren per hari, bulan, semester akademik, dan tahun. Setiap guru/tanggal dihitung sekali.'
+              : 'Ringkasan manajemen untuk izin, JP kehadiran, badal, kesiapan tugas, dan beban operasional guru. Kelas gabung dihitung sebagai satu unit badal per guru/tanggal/JP.'}
           </p>
         </div>
-        <div className="flex gap-2">
+        {activeAnalyticsTab === 'operations' && <div className="flex gap-2">
           <button
             onClick={() => void load()}
             disabled={loading}
@@ -283,9 +287,22 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
           >
             <Download className="h-4 w-4" /> CSV Guru
           </button>
-        </div>
+        </div>}
       </div>
 
+      <div className="inline-flex max-w-full gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm" role="tablist" aria-label="Jenis Management Analytics">
+        <button type="button" role="tab" aria-selected={activeAnalyticsTab === 'operations'}
+          onClick={() => setActiveAnalyticsTab('operations')}
+          className={`rounded-lg px-4 py-2 text-sm font-black transition ${activeAnalyticsTab === 'operations' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+          Beban Operasional (JP)
+        </button>
+        <button type="button" role="tab" aria-selected={activeAnalyticsTab === 'days'}
+          onClick={() => setActiveAnalyticsTab('days')}
+          className={`rounded-lg px-4 py-2 text-sm font-black transition ${activeAnalyticsTab === 'days' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+          Statistik Hari Izin
+        </button>
+      </div>
+      {activeAnalyticsTab === 'days' ? <ManagementLeaveDaysAnalytics /> : <>
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -527,6 +544,7 @@ export const ManagementAnalytics: React.FC<ManagementAnalyticsProps> = ({ onBack
           </section>
         </>
       ) : null}
+      </>}
     </div>
   );
 };
