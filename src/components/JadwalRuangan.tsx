@@ -3,6 +3,8 @@ import React, { useState, useMemo, useEffect } from "react";
 import { buildRoomWeekDays } from "../domain/roomWeek";
 import { classifyRoomOccupancy } from "../domain/roomOccupancy";
 import { WeeklyRoomEditor } from "./WeeklyRoomEditor";
+import { RoomEventReservationsRepository, type RoomEventReservation } from "../infrastructure/repositories/roomEventReservationsRepository";
+import { JAM_TIME_MAP } from "../constants/schedule";
 import { getCurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
 import { 
   ScheduleItem, 
@@ -59,7 +61,11 @@ export function JadwalRuangan({
   const {t} = useLanguage();
   const [canEditRooms, setCanEditRooms] = useState(false);
   const [roomEditMode, setRoomEditMode] = useState(false);
-  const [editingRoomSlot, setEditingRoomSlot] = useState<{ date: string; period: number; initialClass?: string } | null>(null);
+  const [editingRoomSlot, setEditingRoomSlot] = useState<{ date: string; period: number; initialClass?: string; initialEvent?: RoomEventReservation } | null>(null);
+  const eventRepository = useMemo(() => new RoomEventReservationsRepository(), []);
+  const [roomEvents, setRoomEvents] = useState<RoomEventReservation[]>([]);
+  const [eventsLoaded, setEventsLoaded] = useState(false);
+  const [eventLoadError, setEventLoadError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -172,6 +178,38 @@ export function JadwalRuangan({
     const d2 = new Date(last.dateStr).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
     return `${d1} – ${d2}`;
   }, [weekDays]);
+
+  // A single shared calendar for teaching sessions and one-off school events.
+  // Public RPC returns only room/time/title (no private organizer/audit fields).
+  // Do not show "Kosong" as a proven fact if this query fails.
+  const firstWeekDate = weekDays[0]?.dateStr || "";
+  const lastWeekDate = weekDays[weekDays.length - 1]?.dateStr || "";
+  const loadRoomEvents = React.useCallback(async () => {
+    if (!firstWeekDate || !lastWeekDate) return;
+    setEventsLoaded(false);setEventLoadError("");setRoomEvents([]);
+    try {
+      const events = canEditRooms
+        ? await eventRepository.list(firstWeekDate,lastWeekDate)
+        : await eventRepository.listPublic(firstWeekDate,lastWeekDate);
+      setRoomEvents(events);
+    } catch (err) {
+      setEventLoadError(err instanceof Error ? err.message : String(err));
+    } finally {setEventsLoaded(true);}
+  }, [eventRepository,firstWeekDate,lastWeekDate,canEditRooms]);
+  useEffect(() => {void loadRoomEvents();}, [loadRoomEvents]);
+
+  const selectedRoomEvents = roomEvents.filter(event => event.room_id===selectedRoomId);
+  const eventAtPeriod=(date:string,period:number) => {
+    const span=(JAM_TIME_MAP[period] || JAM_TIME_MAP[1]).split(' - ');
+    return selectedRoomEvents.filter(event => event.event_date===date
+      && String(event.start_time).slice(0,5)<span[1]
+      && String(event.end_time).slice(0,5)>span[0]);
+  };
+  const openRoomEdit=(date:string, period:number, usages:any[])=>{
+    const firstEvent=eventAtPeriod(date,period)[0];
+    setEditingRoomSlot({date,period,initialClass:usages.find(u=>u.source!=="Event")?.kelas,
+      initialEvent:firstEvent});
+  };
 
   // --- EFFECTIVE ROOM SCHEDULE MATRIX CALCULATION ---
   const { scheduleGrid, totalWeeklySlots, totalConflicts, unknownRoomIds } = useMemo(() => {
@@ -327,7 +365,23 @@ export function JadwalRuangan({
       }
     });
 
-    // 3. Sort classes within each cell and calculate stats
+    // 3. Include real event reservations as occupancy, NOT fake lessons/classes.
+    // The UI labels them as Event; underlying room_event_reservations has no class_id.
+    for (const event of selectedRoomEvents) {
+      if (!grid[event.event_date]) continue;
+      for (let jp=0;jp<=6;jp++) {
+        const [start,end]=(JAM_TIME_MAP[jp] || JAM_TIME_MAP[1]).split(' - ');
+        if (String(event.start_time).slice(0,5)>=end || String(event.end_time).slice(0,5)<=start) continue;
+        grid[event.event_date][jp].push({
+          id:`room_event_${event.id}`, kelas:'Event / Kegiatan',mapel:event.title,
+          guru:event.organizer || '', mulai:String(event.start_time).slice(0,5),
+          selesai:String(event.end_time).slice(0,5),source:'Event',
+          alasan:event.description || '',isOverride:true,
+        });
+      }
+    }
+
+    // 4. Sort classes within each cell and calculate stats
     let totalSlots = 0;
     let conflicts = 0;
 
@@ -350,18 +404,16 @@ export function JadwalRuangan({
       totalConflicts: conflicts,
       unknownRoomIds: Array.from(unmappedIds)
     };
-  }, [selectedRoomId, weekDays, schedules, jadwalInsidental, masterRuangan, kalenderAkademik]);
+  }, [selectedRoomId, weekDays, schedules, jadwalInsidental, masterRuangan, kalenderAkademik, roomEvents]);
 
   // Default JP Time Range Labels
-  const DEFAULT_JAM_TIMES: Record<number, { mulai: string; selesai: string; label: string }> = {
-    0: { mulai: "07:00", selesai: "07:40", label: "Homeroom / Tahfizh" },
-    1: { mulai: "07:40", selesai: "08:40", label: "JP 1" },
-    2: { mulai: "08:40", selesai: "09:40", label: "JP 2" },
-    3: { mulai: "09:40", selesai: "10:40", label: "JP 3" },
-    4: { mulai: "10:40", selesai: "11:40", label: "JP 4" },
-    5: { mulai: "11:40", selesai: "12:40", label: "JP 5" },
-    6: { mulai: "12:40", selesai: "13:40", label: "JP 6" }
-  };
+  // RC1.7.1: use the same canonical JP fallback times as the Supabase
+  // room collision RPC and the Inval picker. Do not show contradictory hours.
+  const DEFAULT_JAM_TIMES: Record<number, { mulai: string; selesai: string; label: string }> =
+    Object.fromEntries(Array.from({length:7},(_,jp)=>{
+      const [mulai,selesai]=(JAM_TIME_MAP[jp] || JAM_TIME_MAP[1]).split(' - ');
+      return [jp,{mulai,selesai,label:jp===0?'Homeroom / Tahfizh':`JP ${jp}`}];
+    }));
 
   return (
     <div className="space-y-6">
@@ -534,7 +586,7 @@ export function JadwalRuangan({
           <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
           <div>
             <strong className="font-bold text-sm block">⚠️ Konflik Penggunaan Ruangan!</strong>
-            Terdapat <span className="font-extrabold underline">{totalConflicts} slot</span> jam pembelajaran di mana ruangan ini diperebutkan oleh lebih dari satu kelas pada waktu bersamaan. Periksa slot berwarna merah di bawah ini.
+            Terdapat <span className="font-extrabold underline">{totalConflicts} slot</span> jam pembelajaran di mana ruangan ini digunakan oleh lebih dari satu kelas/kegiatan pada waktu bersamaan. Periksa slot berwarna merah di bawah ini.
           </div>
         </div>
       )}
@@ -551,6 +603,10 @@ export function JadwalRuangan({
           </span>
         </div>
       )}
+
+      {!eventsLoaded && <div role="status" className="rounded-xl bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800">Memuat pemakaian event ruangan...</div>}
+      {eventLoadError && <div role="alert" className="rounded-xl bg-rose-50 border border-rose-300 p-3 text-xs font-bold text-rose-800">Reservasi event belum dapat dibaca: {eventLoadError}. Sel kalender TIDAK boleh dianggap tersedia sampai data event berhasil dimuat.</div>}
+      {eventsLoaded && !eventLoadError && <div className="flex justify-end"><button type="button" onClick={()=>void loadRoomEvents()} className="text-xs font-bold text-indigo-700 underline">Refresh Reservasi Event</button></div>}
 
       {/* MAIN WEEKLY GRID SCHEDULE TABLE (DESKTOP) */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden hidden md:block">
@@ -595,8 +651,8 @@ export function JadwalRuangan({
                       ({ conflict: isConflict, combined: isCombined } = classifyRoomOccupancy(usages));
 
                       const handleOpenCellDetail = () => {
-                        if (roomEditMode && canEditRooms) {
-                          setEditingRoomSlot({ date: dayInfo.dateStr, period: jam, initialClass: usages[0]?.kelas });
+                        if (roomEditMode && canEditRooms && eventsLoaded && !eventLoadError) {
+                          openRoomEdit(dayInfo.dateStr,jam,usages);
                           return;
                         }
                         setCellDetailModal({
@@ -627,7 +683,7 @@ export function JadwalRuangan({
                         >
                           {usages.length === 0 ? (
                             <div className="h-full w-full flex flex-col items-center justify-center p-1.5 rounded-xl border border-dashed border-slate-200 text-slate-300 hover:text-blue-600 hover:border-blue-300 transition-all text-xs font-medium italic group">
-                              <span>Kosong</span>
+                              <span>{eventsLoaded && !eventLoadError ? 'Kosong' : 'Event belum diverifikasi'}</span>
                               <span className="text-[9px] text-blue-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity">
                                 🔍 Klik detail
                               </span>
@@ -639,7 +695,9 @@ export function JadwalRuangan({
                               return (
                                 <div 
                                   className={`h-full w-full p-2 rounded-xl border shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between overflow-hidden ${
-                                    u.source === "Insidental"
+                                    u.source === "Event"
+                                      ? "bg-amber-50/90 border-amber-200 text-amber-950"
+                                      : u.source === "Insidental"
                                       ? "bg-indigo-50/90 border-indigo-200 text-indigo-950"
                                       : "bg-blue-50/90 border-blue-200 text-blue-950"
                                   }`}
@@ -654,7 +712,7 @@ export function JadwalRuangan({
                                         ? "bg-indigo-100 text-indigo-800 border-indigo-300"
                                         : "bg-blue-100 text-blue-800 border-blue-300"
                                     }`}>
-                                      {u.source === "Insidental" ? "Insidental" : "Reguler"}
+                                      {u.source === "Event" ? "Event" : u.source === "Insidental" ? "Insidental" : "Reguler"}
                                     </span>
                                   </div>
 
@@ -663,7 +721,7 @@ export function JadwalRuangan({
                                     {u.mapel}
                                   </div>
 
-                                  {u.source === "Insidental" && u.mulai && u.selesai && <span className="text-[10px] font-bold text-indigo-700">{u.mulai}–{u.selesai}</span>}
+                                  {(u.source === "Insidental" || u.source === "Event") && u.mulai && u.selesai && <span className="text-[10px] font-bold text-indigo-700">{u.mulai}–{u.selesai}</span>}
                                   {/* Teacher */}
                                   <div className="flex items-center justify-between text-[10px] text-slate-600 font-medium truncate">
                                     <span className="truncate" title={u.guru}>{u.guru || "-"}</span>
@@ -692,7 +750,7 @@ export function JadwalRuangan({
                                   {isConflict ? "⚠️ KONFLIK" : "✅ GABUNGAN"}
                                 </span>
                                 <span className="text-[10px] font-extrabold text-slate-800">
-                                  {usages.length} Kelas
+                                  {usages.length} Pemakaian
                                 </span>
                               </div>
 
@@ -736,8 +794,8 @@ export function JadwalRuangan({
                   ({ conflict: isConflict, combined: isCombined } = classifyRoomOccupancy(usages));
 
                   const handleOpenCellDetail = () => {
-                    if (roomEditMode && canEditRooms) {
-                      setEditingRoomSlot({ date: dayInfo.dateStr, period: jam, initialClass: usages[0]?.kelas });
+                    if (roomEditMode && canEditRooms && eventsLoaded && !eventLoadError) {
+                      openRoomEdit(dayInfo.dateStr,jam,usages);
                       return;
                     }
                     setCellDetailModal({
@@ -764,7 +822,7 @@ export function JadwalRuangan({
                       </div>
 
                       {usages.length === 0 ? (
-                        <div className="text-xs text-slate-400 italic py-1">Kosong</div>
+                        <div className="text-xs text-slate-400 italic py-1">{eventsLoaded && !eventLoadError ? 'Kosong' : 'Event belum diverifikasi'}</div>
                       ) : (
                         <div className="space-y-2 mt-1">
                           {usages.map((u, idx) => {
@@ -777,6 +835,8 @@ export function JadwalRuangan({
                                     ? "bg-red-50 border-red-300 text-red-950"
                                     : isCombined
                                       ? "bg-emerald-50 border-emerald-200 text-emerald-950"
+                                      : u.source === "Event"
+                                        ? "bg-amber-50 border-amber-200 text-amber-950"
                                       : u.source === "Insidental"
                                         ? "bg-indigo-50 border-indigo-200 text-indigo-950"
                                         : "bg-blue-50 border-blue-200 text-blue-950"
@@ -802,7 +862,7 @@ export function JadwalRuangan({
                                   </div>
                                 </div>
                                 <div className="font-bold text-xs mt-0.5 text-slate-800">{u.mapel}</div>
-                                {u.source === "Insidental" && u.mulai && u.selesai && <div className="text-[11px] font-semibold text-indigo-700">Pukul {u.mulai}–{u.selesai}</div>}
+                                {(u.source === "Insidental" || u.source === "Event") && u.mulai && u.selesai && <div className="text-[11px] font-semibold text-indigo-700">Pukul {u.mulai}–{u.selesai}</div>}
                                 {u.guru && <div className="text-[11px] text-slate-600 font-medium">{u.guru}</div>}
                               </div>
                             );
@@ -818,16 +878,27 @@ export function JadwalRuangan({
         })}
       </div>
 
+      {eventsLoaded && !eventLoadError && selectedRoomEvents.length > 0 && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4 space-y-2">
+        <h2 className="text-sm font-black text-amber-950">Kegiatan / Event • Ruangan Ini</h2>
+        <p className="text-xs text-amber-800">Reservasi juga mencakup kegiatan di luar JP reguler. Klik event untuk melihat atau mengubahnya dalam editor kalender, tanpa kelas pengguna.</p>
+        <div className="grid sm:grid-cols-2 gap-2">{selectedRoomEvents.map(event=><div key={event.id} className="rounded-lg border border-amber-200 bg-white p-3 text-xs">
+          <strong>{event.event_date} • {String(event.start_time).slice(0,5)}–{String(event.end_time).slice(0,5)}</strong>
+          <div className="mt-1 font-semibold">{event.title}</div>
+          {canEditRooms && <button type="button" onClick={()=>setEditingRoomSlot({date:event.event_date,period:1,initialEvent:event})} className="mt-2 text-indigo-700 font-bold underline">Edit / Batalkan Event</button>}
+        </div>)}</div>
+      </section>}
+
       {editingRoomSlot && <WeeklyRoomEditor
         date={editingRoomSlot.date}
         period={editingRoomSlot.period}
         initialRoomId={selectedRoomId}
         initialClass={editingRoomSlot.initialClass}
+        initialEvent={editingRoomSlot.initialEvent}
         schedules={schedules}
         incidentals={jadwalInsidental}
         calendar={kalenderAkademik}
         rooms={masterRuangan}
-        onChanged={onChanged}
+        onChanged={async () => { await onChanged(); await loadRoomEvents(); }}
         onClose={() => setEditingRoomSlot(null)}
       />}
 
@@ -994,7 +1065,7 @@ export function JadwalRuangan({
             {/* Modal Footer */}
             <div className="bg-slate-50 px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
               {canEditRooms && <button onClick={() => {
-                setEditingRoomSlot({ date: cellDetailModal.dateStr, period: cellDetailModal.jamKe, initialClass: cellDetailModal.usages[0]?.kelas });
+                openRoomEdit(cellDetailModal.dateStr,cellDetailModal.jamKe,cellDetailModal.usages);
                 setCellDetailModal(null);
               }} className="inline-flex items-center gap-1 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black text-white"><Pencil className="h-4 w-4" /> Edit Ruangan</button>}
               <button

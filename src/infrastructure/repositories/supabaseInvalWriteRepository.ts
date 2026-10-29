@@ -27,7 +27,8 @@ function normalizeWriteResult(data: unknown): InvalWriteResult {
 export class SupabaseInvalWriteRepository implements InvalWriteRepository {
   async saveBundle(bundle: InvalWriteBundle): Promise<InvalWriteResult> {
     const client = requireSupabaseClient();
-    const { data, error } = await client.rpc("ejadwal_save_inval_bundle_v320_rc13", {
+    const { data, error } = await client.rpc("ejadwal_save_inval_bundle_rc17", {
+      p_absence_category: bundle.absence_category ?? null,
       p_rows: bundle.rows,
       p_room_incidental: bundle.room_incidental,
       p_override_note: bundle.override_note,

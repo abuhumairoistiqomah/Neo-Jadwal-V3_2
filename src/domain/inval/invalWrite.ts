@@ -1,4 +1,5 @@
 import type { LogIzinItem, Teacher } from "../models";
+import type { NewLeaveAbsenceCategory } from "../leaveClassificationV320";
 import { TEAM_TEACHING_NO_BADAL } from "../officialDutyBadal";
 import {
   resolveSubstituteAvailability,
@@ -25,6 +26,8 @@ export interface InvalTaskResourceInput {
 }
 
 export interface InvalWriteMetadata {
+  /** Mandatory on a new manual Inval; not inferred from free-text reason. */
+  absenceCategory?: NewLeaveAbsenceCategory;
   /** One explicit acknowledgement list for each row passed to onAddLogs. */
   constraintOverrideIdsByRow?: string[][];
   /** Resource metadata aligned 1:1 with the expanded persistence rows. */
@@ -51,6 +54,7 @@ export interface InvalWriteRow {
 }
 
 export interface InvalWriteBundle {
+  absence_category?: NewLeaveAbsenceCategory;
   rows: InvalWriteRow[];
   room_incidental: {
     schedule_date: string;
@@ -180,6 +184,7 @@ export function buildInvalWriteBundle(input: {
 
   return {
     rows,
+    absence_category: input.metadata?.absenceCategory,
     room_incidental: room,
     override_note: input.metadata?.overrideNote?.trim() || null,
   };

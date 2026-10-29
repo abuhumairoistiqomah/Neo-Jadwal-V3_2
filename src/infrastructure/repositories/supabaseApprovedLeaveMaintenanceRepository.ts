@@ -67,6 +67,19 @@ export class SupabaseApprovedLeaveMaintenanceRepository {
       tasks:(tasks.data||[]).filter((v:any)=>v.leave_request_id===r.id).map((v:any)=>({period:Number(v.period),description:String(v.description||'')})),
     }));
   }
+  async correctReason(requestId:string,reason:string,detail:string,note:string):Promise<void> {
+    const {error}=await requireSupabaseClient().rpc('ejadwal_correct_leave_reason_rc17',{
+      p_leave_request_id:requestId,p_reason:reason,p_detail:detail,p_note:note,
+    });
+    if(error)throw new Error(`Koreksi alasan ditolak: ${error.message}`);
+  }
+  async editTeacherTask(requestId:string,period:number,description:string,expectedDescription:string,note:string):Promise<void> {
+    const {error}=await requireSupabaseClient().rpc('ejadwal_edit_leave_task_rc17',{
+      p_leave_request_id:requestId,p_period:period,p_description:description,
+      p_expected_description:expectedDescription,p_note:note,
+    });
+    if(error)throw new Error(`Koreksi tugas ditolak: ${error.message}`);
+  }
   /** Correction of approved historical classification only, audited in PostgreSQL. */
   async setAbsenceCategory(requestId:string,category:LeaveAbsenceCategory,note:string):Promise<void> {
     const {error}=await requireSupabaseClient().rpc('ejadwal_set_leave_category_v320',{

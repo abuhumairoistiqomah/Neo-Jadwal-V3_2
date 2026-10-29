@@ -597,6 +597,15 @@ export const LeaveApprovalAdmin: React.FC<LeaveApprovalAdminProps> = ({
               initialReason={activeWaitingSession.reason || "Izin"}
               approvedWaitingSession={activeWaitingSession}
               taskOwnership="LEAVE_TEACHER"
+              onTeacherTaskSaved={(text) => {
+                setActiveWaitingSession(current => current ? {...current, taskText:text} : current);
+                setWaitingRows(current => current.map(row => (
+                  row.leaveRequestId === activeWaitingSession.leaveRequestId
+                  && row.scheduleDate === activeWaitingSession.scheduleDate
+                  && row.period === activeWaitingSession.period
+                  ? {...row, taskText:text} : row
+                )));
+              }}
               onAddLogs={saveWaitingBadal}
               onBack={() => setActiveWaitingSession(null)}
             />

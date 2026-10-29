@@ -15,6 +15,9 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
   const [loadFailed,setLoadFailed]=useState(false);
   const [rows,setRows]=useState<ApprovedLeaveEntry[]>([]);
   const [categoryDrafts,setCategoryDrafts]=useState<Record<string,LeaveAbsenceCategory>>({});
+  const [reasonDrafts,setReasonDrafts]=useState<Record<string,string>>({});
+  const [detailDrafts,setDetailDrafts]=useState<Record<string,string>>({});
+  const [taskDrafts,setTaskDrafts]=useState<Record<string,string>>({});
   const [showPast,setShowPast]=useState(false);
   const [showDeleted,setShowDeleted]=useState(false);
   const [error,setError]=useState('');
@@ -34,6 +37,9 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
       const freshRows=await repo.list();
       setRows(freshRows);
       setCategoryDrafts({});
+      setReasonDrafts(Object.fromEntries(freshRows.map(r=>[r.id,r.reason])));
+      setDetailDrafts(Object.fromEntries(freshRows.map(r=>[r.id,r.detail])));
+      setTaskDrafts(Object.fromEntries(freshRows.flatMap(r=>r.tasks.map(t=>[`${r.id}:${t.period}`,t.description]))));
     } catch(e){setLoadFailed(true);setError(e instanceof Error?e.message:String(e));}
     finally{setLoading(false);setChecking(false);}
   },[repo]);
@@ -55,6 +61,31 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
     try {await repo.setAbsenceCategory(row.id,next,note.trim());
       setInfo(`Kategori ${row.code} diperbarui menjadi ${absenceCategoryLabel(next)} (audit tersimpan).`);
       await load();await onChanged?.();
+    }catch(e){setError(e instanceof Error?e.message:String(e));}
+    finally{setWorking(false);}
+  };
+  const correctReason=async(row:ApprovedLeaveEntry)=>{
+    const nextReason=(reasonDrafts[row.id]??row.reason).trim();
+    const nextDetail=(detailDrafts[row.id]??row.detail).trim();
+    if(nextReason===row.reason && nextDetail===row.detail)return;
+    if(nextReason.length<3){setError('Alasan minimal 3 karakter.');return;}
+    const note=window.prompt(`Catatan audit koreksi alasan ${row.code} (minimal 5 karakter):`);
+    if(!note||note.trim().length<5)return;
+    setWorking(true);setError('');setInfo('');
+    try{await repo.correctReason(row.id,nextReason,nextDetail,note.trim());
+      await load();await onChanged?.();setInfo(`Alasan ${row.code} diperbarui dan seluruh snapshot badal disinkronkan.`);
+    }catch(e){setError(e instanceof Error?e.message:String(e));}
+    finally{setWorking(false);}
+  };
+  const correctTask=async(row:ApprovedLeaveEntry,period:number)=>{
+    const original=row.tasks.find(t=>t.period===period)?.description||'';
+    const next=taskDrafts[`${row.id}:${period}`]??original;
+    if(next===original)return;
+    const note=window.prompt(`Catatan audit tugas ${row.code} JP${period} (minimal 5 karakter):`);
+    if(!note||note.trim().length<5)return;
+    setWorking(true);setError('');setInfo('');
+    try{await repo.editTeacherTask(row.id,period,next,original,note.trim());
+      await load();await onChanged?.();setInfo(`Tugas JP${period} berhasil diperbarui pada pengajuan dan tugas guru pengganti. Lampiran lama tetap tersimpan.`);
     }catch(e){setError(e instanceof Error?e.message:String(e));}
     finally{setWorking(false);}
   };
@@ -124,6 +155,17 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
         return <article key={row.id} className={`rounded-2xl border bg-white p-4 space-y-3 ${row.deleted?'opacity-60 border-rose-200':'border-slate-200'}`}>
           <div className="flex flex-wrap justify-between gap-2"><div><div className="flex flex-wrap items-center gap-2"><strong className="text-slate-900">{row.teacher}</strong><span className="text-[10px] font-mono text-slate-500">{row.code}</span>{row.deleted?<span className="text-[10px] bg-rose-100 text-rose-800 rounded px-2 py-0.5">SOFT DELETED</span>:<span className="text-[10px] bg-emerald-100 text-emerald-800 rounded px-2 py-0.5">APPROVED</span>}</div>
             <p className="text-xs text-slate-500 mt-1">{row.dateStart}{row.dateEnd!==row.dateStart?` – ${row.dateEnd}`:''} • {row.reason}</p>{row.detail&&<p className="text-xs mt-1 text-slate-600">{row.detail}</p>}
+            {!row.deleted&&<div className="mt-3 space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
+              <strong className="text-xs text-indigo-900">Koreksi Alasan Izin (Audit)</strong>
+              <input aria-label={`Alasan ${row.code}`} value={reasonDrafts[row.id]??row.reason}
+                onChange={e=>setReasonDrafts(v=>({...v,[row.id]:e.target.value}))}
+                className="block w-full rounded-lg border bg-white p-2 text-sm" maxLength={240}/>
+              <textarea aria-label={`Detail ${row.code}`} value={detailDrafts[row.id]??row.detail}
+                onChange={e=>setDetailDrafts(v=>({...v,[row.id]:e.target.value}))}
+                className="block w-full rounded-lg border bg-white p-2 text-xs" rows={2} maxLength={2000}/>
+              <button type="button" disabled={working||((reasonDrafts[row.id]??row.reason)===row.reason&&(detailDrafts[row.id]??row.detail)===row.detail)}
+                onClick={()=>void correctReason(row)} className="rounded-lg bg-indigo-700 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40">Simpan Alasan + Audit</button>
+            </div>}
             <div className="mt-2 flex flex-wrap gap-2 items-center"><label className="text-xs text-slate-600">Jenis Izin
               <select disabled={row.deleted||working} value={categoryDrafts[row.id]||row.absenceCategory} onChange={e=>setCategoryDrafts(v=>({...v,[row.id]:e.target.value as LeaveAbsenceCategory}))} className="ml-2 rounded border bg-white p-1.5">
                 {(['PERSONAL','SCHOOL_DUTY','UNCLASSIFIED'] as const).map(c=><option key={c} value={c}>{absenceCategoryLabel(c)}</option>)}
@@ -135,7 +177,22 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
           {row.deleted&&<button type="button" onClick={()=>{setEdit(null);setRemoval({id:row.id,code:row.code,note:'',restore:true});}} className="rounded-lg border border-emerald-200 text-emerald-700 bg-emerald-50 px-3 py-1.5 text-xs font-bold"><T>{"Pulihkan (validasi ulang)"}</T></button>}
           <div className="flex flex-wrap gap-1">{row.periods.map((p,i)=><span key={`${p.date}|${p.period}|${i}`} className={`text-[10px] rounded px-2 py-1 font-bold ${p.type==='FREE'?'bg-sky-50 text-sky-700':'bg-slate-100 text-slate-700'}`}>{p.date} • JP{p.period} {p.type==='FREE'?'FREE':''}</span>)}</div>
           <div className="grid gap-2 sm:grid-cols-2">{row.slots.map(s=><div key={s.id} className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-xs space-y-1"><div className="font-extrabold">{s.scheduleDate} • JP{s.period} • {s.className}</div><div>{s.subject||'Mapel belum tercatat'}</div><div className="text-slate-600">Badal: <strong>{s.substitute||'BELUM DIPILIH'}</strong> • {s.status}</div></div>)}</div>
-          {!!row.tasks.length&&<details className="text-xs text-slate-600"><summary className="font-bold cursor-pointer flex gap-1 items-center"><ChevronDown className="w-4 h-4"/> Lihat tugas guru ({row.tasks.length})</summary><div className="mt-2 space-y-1">{row.tasks.map(task=><p key={task.period}>JP{task.period}: {task.description||'Belum diisi'}</p>)}</div></details>}
+          {!row.deleted&&<details className="text-xs text-slate-600 rounded-xl border border-slate-200 p-3">
+            <summary className="font-bold cursor-pointer flex gap-1 items-center"><ChevronDown className="w-4 h-4"/> Edit Tugas Pengajuan & Badal ({row.tasks.length} JP terisi)</summary>
+            <p className="mt-2 text-xs text-amber-800">Tugas dimiliki oleh pengajuan guru. Perubahan berlaku untuk semua kelas yang berbagi JP ini, dan diteruskan ke tugas badal. Lampiran Drive/link terstruktur tidak dihapus.</p>
+            <div className="mt-2 space-y-2">{[...new Set([...row.tasks.map(t=>t.period),...row.periods.filter(p=>p.type==='TEACHING'&&p.period>0).map(p=>p.period)])].sort((a,b)=>a-b).map(period=>{
+              const original=row.tasks.find(t=>t.period===period)?.description||'';
+              const current=taskDrafts[`${row.id}:${period}`]??original;
+              return <div key={period} className="rounded-lg border bg-slate-50 p-2 space-y-2">
+                <label className="block font-bold">JP{period} • Materi/Tugas</label>
+                <textarea aria-label={`Tugas ${row.code} JP${period}`} rows={2} value={current}
+                  onChange={e=>setTaskDrafts(v=>({...v,[`${row.id}:${period}`]:e.target.value}))}
+                  className="w-full rounded-lg border bg-white p-2" maxLength={5000}/>
+                <button type="button" disabled={working||current===original} onClick={()=>void correctTask(row,period)}
+                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40">Simpan Tugas JP{period} + Audit</button>
+              </div>;
+            })}</div>
+          </details>}
           {!row.deleted&&groups.length>0&&<div className="flex flex-wrap gap-2">{groups.map(group=><button type="button" key={`${group.date}|${group.period}`} onClick={()=>openEditor(row,group.date,group.period)} className="rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-800 px-3 py-2 text-xs font-bold flex gap-1 items-center"><Clock3 className="w-4 h-4"/> <T>{"Edit JP"}</T>{group.period} ({group.date})</button>)}</div>}
         </article>;
       })}</div>

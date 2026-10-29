@@ -33,6 +33,8 @@ import { buildApprovedLeaveOperatorRows } from "../domain/inval/approvedLeaveSel
 import type { WaitingBadalSession } from "../domain/leaveApproval";
 
 import { T } from '../i18n/LanguageProvider';
+import { ABSENCE_CATEGORY_OPTIONS, type NewLeaveAbsenceCategory } from '../domain/leaveClassificationV320';
+import { SupabaseApprovedLeaveMaintenanceRepository } from "../infrastructure/repositories/supabaseApprovedLeaveMaintenanceRepository";
 import { TeacherDutyV319Repository } from '../infrastructure/repositories/teacherDutyV319Repository';
 import { resolveTeacherDutyBlock, type TeacherDutySnapshot } from '../domain/dutyResolutionV319';
 
@@ -55,6 +57,7 @@ interface InputGuruPenggantiProps {
   /** Locks the smart picker to already-approved LEAVE_WORKFLOW WAITING rows. */
   approvedWaitingSession?: WaitingBadalSession;
   taskOwnership?: "OPERATOR" | "LEAVE_TEACHER";
+  onTeacherTaskSaved?: (description: string) => void;
   onUploadTaskFile?: (file: File, context: { scheduleDate: string; period: number; classLabel: string; subject: string }) => Promise<InvalTaskResourceInput>;
   onAddLogs: (
     newLogs: Omit<LogIzinItem, "id">[],
@@ -496,6 +499,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
   officialDutySlots,
   approvedWaitingSession,
   taskOwnership = "OPERATOR",
+  onTeacherTaskSaved,
   onUploadTaskFile,
   onAddLogs,
   onBack,
@@ -520,6 +524,13 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
     return ()=>{cancelled=true;};
   },[tanggal,dutyRepository,readOnlyPreview]);
   const dutyReady = readOnlyPreview || (dutyState.date===tanggal && dutyState.snapshot!==null);
+  // RC1.7.1: teacher-owned assignment is editable by management at the actual
+  // substitute picker. Save to its authoritative leave_request_task BEFORE
+  // proceeding to the coverage assignment. A local textarea is not a DB edit.
+  const adminTaskRepository = useMemo(() => new SupabaseApprovedLeaveMaintenanceRepository(), []);
+  const [savedTeacherTask, setSavedTeacherTask] = useState(approvedWaitingSession?.taskText || "");
+  const [savingTeacherTask, setSavingTeacherTask] = useState(false);
+  const [teacherTaskFeedback, setTeacherTaskFeedback] = useState("");
   const [guruIzin, setGuruIzin] = useState<string>("");
   const [searchTeacherQuery, setSearchTeacherQuery] = useState<string>("");
   const [showTeacherSuggestions, setShowTeacherSuggestions] = useState<boolean>(false);
@@ -546,6 +557,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
   }, [teachers, searchTeacherQuery]);
 
   const [alasan, setAlasan] = useState<string>("");
+  const [absenceCategory, setAbsenceCategory] = useState<NewLeaveAbsenceCategory>(officialDutySlots ? "SCHOOL_DUTY" : "PERSONAL");
   const [selectedHours, setSelectedHours] = useState<number[]>([]);
   const [generatedRows, setGeneratedRows] = useState<Array<{
     jam_ke: number;
@@ -1513,6 +1525,32 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
     }));
   }, []);
 
+  const saveTeacherTaskAtPicker = async (index: number) => {
+    if (!approvedWaitingSession || taskOwnership !== "LEAVE_TEACHER") return;
+    const row = generatedRows[index];
+    if (!row) return;
+    const next = row.tugas.trim();
+    if (next === savedTeacherTask) return;
+    const note = window.prompt(`Alasan koreksi tugas JP${approvedWaitingSession.period} (audit, minimal 5 karakter):`);
+    if (!note || note.trim().length < 5) return;
+    setSavingTeacherTask(true);
+    setTeacherTaskFeedback("");
+    setErrorMessage("");
+    try {
+      await adminTaskRepository.editTeacherTask(
+        approvedWaitingSession.leaveRequestId!, approvedWaitingSession.period,
+        next, savedTeacherTask, note.trim(),
+      );
+      setSavedTeacherTask(next);
+      onTeacherTaskSaved?.(next);
+      setTeacherTaskFeedback("Tugas tersimpan ke pengajuan izin dan tersinkron ke tugas badal (audit tercatat).");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSavingTeacherTask(false);
+    }
+  };
+
   const handleTaskFileUpload = React.useCallback(async (index: number, file: File) => {
     if (!onUploadTaskFile) return;
     const row = generatedRows[index];
@@ -1559,6 +1597,15 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
   // Submit and save replacement logs
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (approvedWaitingSession && taskOwnership === "LEAVE_TEACHER"
+      && generatedRows.some(row => row.tugas.trim() !== savedTeacherTask)) {
+      setErrorMessage("Ada perubahan tugas belum disimpan. Klik 'Simpan Perubahan Tugas' terlebih dahulu agar pengajuan dan badal sinkron.");
+      return;
+    }
+    if (savingTeacherTask) {
+      setErrorMessage("Penyimpanan tugas sedang berlangsung.");
+      return;
+    }
     if(!readOnlyPreview && !dutyReady){
       setErrorMessage(dutyState.error || 'Belum selesai memverifikasi penugasan kegiatan RC3. Coba lagi.');
       return;
@@ -1658,6 +1705,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
         newLogs,
         roomIncidentalData,
         {
+          absenceCategory: officialDutySlots ? "SCHOOL_DUTY" : absenceCategory,
           constraintOverrideIdsByRow: expandedRows.map((entry) => entry.constraintOverrideIds),
           subjectOverridesByRow: expandedRows.map((entry) => entry.subjectOverride),
           taskResourcesByRow: generatedRows.flatMap((row) => {
@@ -1757,7 +1805,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
           Penyimpanan dilakukan sebagai OFFICIAL_DUTY, bukan izin pribadi.
         </div>}
         {approvedWaitingSession && <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900 mb-5">
-          <strong>Badal Pengajuan Izin {approvedWaitingSession.requestCode}.</strong> Guru, tanggal, JP, dan kelas dikunci sesuai Waiting List. Mapel saat badal dapat diedit tanpa mengubah jadwal master atau tugas guru izin. Rekomendasi guru mengikuti mapel hasil edit.
+          <strong>Badal Pengajuan Izin {approvedWaitingSession.requestCode}.</strong> Guru, tanggal, JP, dan kelas dikunci sesuai Waiting List. Mapel dapat diedit tanpa mengubah master. Admin juga dapat mengoreksi tugas guru izin secara terpisah dengan audit sebelum menyimpan badal. Rekomendasi mengikuti mapel hasil edit.
         </div>}
         {/* Step 1: Input Permohonan Form */}
         {!readOnlyPreview && !dutyReady && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
@@ -1891,6 +1939,19 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                   )}
                 </div>
               )}
+            </div>
+
+            {/* RC1.7: operator category belongs to the canonical persisted coverage. */}
+            <div className="space-y-2 md:col-span-2">
+              <label htmlFor="input-absence-category-rc17" className="block text-sm font-bold text-gray-700">Kategori Halangan / Izin (Statistik)</label>
+              {approvedWaitingSession ? <p className="rounded-lg border bg-slate-50 p-3 text-xs font-bold">Kategori mengikuti pengajuan izin yang sudah disetujui. Tidak dapat diubah pada form badal.</p>
+                : <select id="input-absence-category-rc17" value={officialDutySlots ? "SCHOOL_DUTY" : absenceCategory}
+                    disabled={Boolean(officialDutySlots)}
+                    onChange={e => setAbsenceCategory(e.target.value as NewLeaveAbsenceCategory)}
+                    className="w-full rounded-xl border border-indigo-200 bg-white p-3 text-sm font-semibold">
+                    {ABSENCE_CATEGORY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>}
+              <p className="text-xs text-slate-500">Klasifikasi ini memengaruhi Statistik Manajemen. Teks alasan dicatat terpisah. Penugasan resmi selalu Tugas Sekolah.</p>
             </div>
 
             {/* Field C: Alasan */}
@@ -2321,15 +2382,24 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
                             rows={3}
                             placeholder={taskOwnership === "LEAVE_TEACHER" ? "Guru belum mengisi tugas untuk JP ini." : "Tulis instruksi, tempel link saja, atau kombinasikan keduanya. Contoh: Kerjakan LKS Hal 15 / https://classroom.google.com/..."}
                             value={row.tugas || ""}
-                            readOnly={taskOwnership === "LEAVE_TEACHER"}
-                            onChange={(e) => { if (taskOwnership !== "LEAVE_TEACHER") handleTugasChange(index, e.target.value); }}
-                            className={`w-full border border-gray-200 focus:border-indigo-500 text-gray-800 text-xs font-medium p-2.5 rounded-xl focus:outline-none transition-colors resize-y ${taskOwnership === "LEAVE_TEACHER" ? "bg-slate-50 cursor-default" : "bg-white"}`}
+                            readOnly={Boolean(readOnlyPreview || (taskOwnership === "LEAVE_TEACHER" && savingTeacherTask))}
+                            onChange={(e) => handleTugasChange(index, e.target.value)}
+                            className="w-full border border-gray-200 bg-white focus:border-indigo-500 text-gray-800 text-xs font-medium p-2.5 rounded-xl focus:outline-none transition-colors resize-y"
                           />
                           {taskOwnership === "LEAVE_TEACHER" && (
                             <p className={`mt-1.5 text-[10px] font-semibold ${row.tugas ? "text-emerald-700" : "text-amber-700"}`}>
-                              {row.tugas ? "✓ Tugas berasal dari pengajuan guru dan tidak perlu diketik ulang oleh Wakakur." : "⚠ Guru belum menyiapkan tugas pada pengajuan ini. Assignment badal tetap dapat diproses."}
+                              {row.tugas ? "Admin boleh memperbaiki tugas ini. Simpan perubahan terlebih dahulu sebelum menempatkan badal." : "Guru belum menyiapkan tugas. Admin dapat mengisinya lalu menyimpan ke pengajuan izin."}
                             </p>
                           )}
+                          {taskOwnership === "LEAVE_TEACHER" && approvedWaitingSession && <div className="mt-2 space-y-1">
+                            <button type="button" disabled={savingTeacherTask || readOnlyPreview || row.tugas.trim() === savedTeacherTask}
+                              onClick={() => void saveTeacherTaskAtPicker(index)}
+                              className="rounded-lg bg-indigo-700 text-white px-3 py-2 text-xs font-bold disabled:opacity-40">
+                              {savingTeacherTask ? "Menyimpan tugas..." : "Simpan Perubahan Tugas (Audit)"}
+                            </button>
+                            {row.tugas.trim() !== savedTeacherTask && <p className="text-amber-700 text-xs font-bold">Perubahan belum tersimpan ke pengajuan; penyimpanan badal ditahan sampai tugas disimpan.</p>}
+                            {teacherTaskFeedback && <p role="status" className="text-emerald-700 text-xs font-semibold">{teacherTaskFeedback}</p>}
+                          </div>}
                           <div className="mt-2 flex flex-wrap items-center gap-2">
                             {onUploadTaskFile && (
                               <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] font-bold cursor-pointer">

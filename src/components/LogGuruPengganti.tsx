@@ -20,6 +20,7 @@ interface LogGuruPenggantiProps {
   teachers?: Teacher[];
   onDeleteLog?: (id: string) => void;
   onReplaceSubstitute?: (log: LogIzinItem, substituteTeacherId: string, constraintIds?: string[], overrideNote?: string) => Promise<void>;
+  onCorrectManualReason?: (log: LogIzinItem, newReason: string, note: string) => Promise<void>;
   onBack: () => void;
 }
 
@@ -44,6 +45,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
   teachers = [],
   onDeleteLog,
   onReplaceSubstitute,
+  onCorrectManualReason,
   onBack,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
@@ -123,6 +125,17 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
     }
   };
 
+  const editManualReason=async(log:LogIzinItem)=>{
+    if(log.source!=='ADMIN_MANUAL'||!onCorrectManualReason)return;
+    const reason=window.prompt(`Koreksi alasan izin ${log.guru_izin} • ${log.tanggal} JP${log.jam_ke}:`,log.alasan);
+    if(!reason||reason.trim().length<3||reason.trim()===log.alasan.trim())return;
+    const note=window.prompt('Catatan audit perubahan alasan (minimal 5 karakter):');
+    if(!note||note.trim().length<5)return;
+    setSavingEdit(true);setEditError('');
+    try{await onCorrectManualReason(log,reason.trim(),note.trim());}
+    catch(e){setEditError(e instanceof Error?e.message:String(e));}
+    finally{setSavingEdit(false);}
+  };
   const teacherAlreadyAssigned = editingLog ? logs.filter((other) =>
     other.id !== editingLog.id && other.tanggal === editingLog.tanggal &&
     other.jam_ke === editingLog.jam_ke && other.substitute_teacher_id === newTeacherId
@@ -282,6 +295,7 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
           </div>
         </div>
       )}
+      {editError&&!editingLog&&<div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">{editError}</div>}
       {/* Back Button */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <button
@@ -416,7 +430,10 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                             </span>
                           </td>
                           <td className="p-3 font-semibold text-gray-800">{log.guru_izin}</td>
-                          <td className="p-3 text-gray-500 italic font-medium">{log.alasan}</td>
+                          <td className="p-3 text-gray-500 italic font-medium">{log.alasan}
+                            {log.source==='ADMIN_MANUAL'&&onCorrectManualReason&&<button type="button" disabled={savingEdit}
+                              className="block mt-1 text-indigo-700 font-bold underline" onClick={()=>void editManualReason(log)}>Koreksi Alasan (Audit)</button>}
+                          </td>
                           <td className="p-3 font-medium">{displaySubject(log)}</td>
                           <td className="p-3 font-bold text-gray-800">{log.kelas}</td>
                           <td className="p-3 text-xs max-w-xs">
@@ -508,6 +525,8 @@ export const LogGuruPengganti: React.FC<LogGuruPenggantiProps> = ({
                           </span>
                           <h4 className="font-bold text-gray-800 text-xs">Izin: {log.guru_izin}</h4>
                           <span className="text-[10px] text-gray-400 italic">Alasan: {log.alasan}</span>
+                          {log.source==='ADMIN_MANUAL'&&onCorrectManualReason&&<button type="button" disabled={savingEdit}
+                            className="block text-xs text-indigo-700 font-bold underline" onClick={()=>void editManualReason(log)}>Koreksi Alasan (Audit)</button>}
                         </div>
 
                         {(onReplaceSubstitute || onDeleteLog) && <div className="flex shrink-0 items-center gap-1">

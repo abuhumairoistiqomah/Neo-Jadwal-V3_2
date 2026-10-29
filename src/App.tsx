@@ -8,6 +8,7 @@ import { Dashboard } from "./components/Dashboard";
 import { JadwalLengkap } from "./components/JadwalLengkap";
 import { JadwalKelas } from "./components/JadwalKelas";
 import { JadwalRuangan } from "./components/JadwalRuangan";
+import { requireSupabaseClient } from "./infrastructure/supabase/client";
 import { ListMapel } from "./components/ListMapel";
 import { ListGuruKelas } from "./components/ListGuruKelas";
 import { JamKosongIndividu } from "./components/JamKosongIndividu";
@@ -347,6 +348,17 @@ export default function App() {
       constraintIds,
       overrideNote,
     });
+    await refreshFromSupabase();
+  };
+
+  const handleCorrectManualReason = async (log: LogIzinItem, newReason: string, note: string) => {
+    const ctx = await getCurrentUserContext();
+    if (!ctx?.roles.some(role=>role==='ADMIN'||role==='WAKASEK'))
+      throw new Error('Login Supabase ADMIN/WAKASEK diperlukan.');
+    const { error } = await requireSupabaseClient().rpc('ejadwal_correct_manual_inval_reason_rc17', {
+      p_coverage_slot_id: log.id, p_reason: newReason, p_note: note,
+    });
+    if (error) throw new Error(`Koreksi alasan gagal: ${error.message}`);
     await refreshFromSupabase();
   };
 
@@ -1129,6 +1141,7 @@ export default function App() {
                   teachers={teachers}
                   onDeleteLog={handleDeleteLog}
                   onReplaceSubstitute={handleReplaceLogSubstitute}
+                  onCorrectManualReason={handleCorrectManualReason}
                   onBack={() => setActivePage("dashboard")}
                 />
               ) : (
