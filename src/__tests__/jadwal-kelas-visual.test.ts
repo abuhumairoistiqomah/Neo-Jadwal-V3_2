@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { readFileSync } from "node:fs";
 import type { LogIzinItem, ScheduleItem } from "../domain/models";
 import { parseScheduleClassMode, scheduleClassModeToLegacy } from "../domain/schedule/classMode";
 import {
@@ -113,5 +114,39 @@ describe("V3.7.3 Jadwal Kelas visual semantics", () => {
     assert.equal(classifyJadwalKelasCell({
       items: [a], schedules: [a, b], selectedClass: a.kelas, day: "Senin", period: 3, logs: [log()], referenceDate: "2026-10-07",
     }), "SUBSTITUTE");
+  });
+});
+
+
+describe("RC1.7.1 HF4 — class timetable incidental color parity", () => {
+  const source = readFileSync(new URL("../components/JadwalKelas.tsx", import.meta.url), "utf8");
+  const teacherSource = readFileSync(new URL("../components/JadwalLengkap.tsx", import.meta.url), "utf8");
+
+  it("uses orange for the same incidental status as Jadwal Guru on desktop and mobile", () => {
+    assert.match(source, /desktop: "bg-orange-50 text-orange-950 border-l-2 border-l-orange-500/);
+    assert.match(source, /mobile: "border-orange-200 bg-orange-50 text-orange-950/);
+    assert.match(source, /teacherText: "text-orange-800"/);
+    assert.match(source, /periodBadge: "border-orange-200 text-orange-800"/);
+    assert.match(teacherSource, /weekStatus === "INSIDENTAL"\)\) cellClasses = "bg-orange-50/);
+    assert.doesNotMatch(source, /desktop: "bg-indigo-50\/90 text-indigo-950/);
+  });
+
+  it("keeps badal higher priority, and incidental higher priority than alternating", () => {
+    const substituteIndex = source.indexOf('if (cell.hasSubstitute)');
+    const missingBadalIndex = source.indexOf('else if (cell.hasMissingSubstitute)');
+    const incidentalIndex = source.indexOf('else if (cell.isIncidental)');
+    const alternatingIndex = source.indexOf('else if (displayItems.some((item) => parseScheduleClassMode(item.kelasgabung) === "ALTERNATING"))');
+    assert.ok(substituteIndex >= 0 && substituteIndex < missingBadalIndex);
+    assert.ok(missingBadalIndex < incidentalIndex && incidentalIndex < alternatingIndex);
+    assert.match(source, /visual = JADWAL_KELAS_CELL_VISUALS\.SUBSTITUTE/);
+  });
+
+  it("matches the orange legend and uses one visual object for weekday, Friday, mobile and PNG", () => {
+    assert.match(source, /bg-orange-50 border border-orange-300/);
+    assert.match(source, /\$\{visual\.desktop\}/g);
+    assert.match(source, /\$\{visual\.mobile\}/);
+    assert.match(source, /id="timetable-capture-area"/);
+    assert.match(source, /downloadElementAsPng\(/);
+    assert.match(source, /scheduleViewMode === "MASTER"/);
   });
 });

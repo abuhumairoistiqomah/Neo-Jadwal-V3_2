@@ -29,6 +29,8 @@ export interface TeacherDayRecommendationStats {
   scheduleByPeriod: Map<number, EffectiveScheduleItem[]>;
   busyPeriods: Set<number>;
   pendampingPeriods: Set<number>;
+  /** Active companion roles, grouped by the exact JP and effective class. */
+  pendampingClassesByPeriod: Map<number, string[]>;
   assistingNonCorePeriods: Set<number>;
   periodDutyKind: Map<number, "PENDAMPING" | "MENGAJAR">;
   isPendampingOnDay: boolean;
@@ -88,6 +90,25 @@ export function buildFormAssignmentsByTeacher(
     result.set(key, existing);
   });
   return result;
+}
+
+/** Normalize only full class identifiers; never infer a match from grade or track alone. */
+function normalizeClassForPendamping(value: string): string {
+  return String(value || "")
+    .trim()
+    .replace(/^kelas\s+/i, "")
+    .replace(/\b0+(\d+)\b/g, "$1")
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("id-ID");
+}
+
+/** A direct companion match requires the same class on this exact JP/date. */
+export function isPendampingOfTargetClass(
+  companionClasses: readonly string[],
+  targetClasses: readonly string[],
+): boolean {
+  const wanted = new Set(targetClasses.map(normalizeClassForPendamping).filter(Boolean));
+  return companionClasses.some((className) => wanted.has(normalizeClassForPendamping(className)));
 }
 
 function teacherAppearsInSlot(slot: EffectiveScheduleItem, teacherKey: string): boolean {
@@ -224,6 +245,7 @@ export function buildInvalRecommendationDayIndex(args: {
     const scheduleByPeriod = new Map<number, EffectiveScheduleItem[]>();
     const busyPeriods = new Set<number>();
     const pendampingPeriods = new Set<number>();
+    const pendampingClassesByPeriod = new Map<number, string[]>();
     const assistingNonCorePeriods = new Set<number>();
     const periodDutyKind = new Map<number, "PENDAMPING" | "MENGAJAR">();
 
@@ -239,9 +261,15 @@ export function buildInvalRecommendationDayIndex(args: {
       scheduleByPeriod.set(period, rows);
 
       const dutyKind = classifyDutyForTeacher(slot, teacher);
-      if (dutyKind === "PENDAMPING") {
+      if (dutyKind === "PENDAMPING" && slot.isActive) {
         pendampingPeriods.add(period);
         hasAnyPendampingSlot = true;
+        const classes = pendampingClassesByPeriod.get(period) || [];
+        const className = String(slot.kelas || "").trim();
+        if (className && !classes.some((value) => normalizeClassForPendamping(value) === normalizeClassForPendamping(className))) {
+          classes.push(className);
+        }
+        pendampingClassesByPeriod.set(period, classes);
       }
 
       // V3.11 load breakdown ignored calendar-suppressed regular duties when
@@ -267,6 +295,7 @@ export function buildInvalRecommendationDayIndex(args: {
       scheduleByPeriod,
       busyPeriods,
       pendampingPeriods,
+      pendampingClassesByPeriod,
       assistingNonCorePeriods,
       periodDutyKind,
       isPendampingOnDay,

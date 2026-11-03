@@ -463,10 +463,10 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
   };
 
   const incidentalVisual = {
-    desktop: "bg-indigo-50/90 text-indigo-950 border-l-2 border-l-indigo-500 hover:bg-indigo-100/80",
-    mobile: "border-indigo-200 bg-indigo-50/90 text-indigo-950 hover:bg-indigo-100/80 hover:ring-indigo-400/30",
-    teacherText: "text-indigo-800",
-    periodBadge: "border-indigo-200 text-indigo-800",
+    desktop: "bg-orange-50 text-orange-950 border-l-2 border-l-orange-500 hover:bg-orange-100/80",
+    mobile: "border-orange-200 bg-orange-50 text-orange-950 hover:bg-orange-100/80 hover:ring-orange-400/30",
+    teacherText: "text-orange-800",
+    periodBadge: "border-orange-200 text-orange-800",
     label: "Insidental",
     legend: "Jadwal Insidental",
   };
@@ -549,10 +549,13 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
     } else if (cell.hasMissingSubstitute) {
       teacherDisplay = { text: "Badal belum ditentukan", prefix: "⚠ " };
       visual = JADWAL_KELAS_CELL_VISUALS.SUBSTITUTE;
+    } else if (cell.isIncidental) {
+      // A dated incidental is the operational change users need to notice,
+      // even when its master slot has an alternating-class designation.
+      // Assigned/missing badal still takes precedence above.
+      visual = incidentalVisual;
     } else if (displayItems.some((item) => parseScheduleClassMode(item.kelasgabung) === "ALTERNATING")) {
       visual = JADWAL_KELAS_CELL_VISUALS.ALTERNATING;
-    } else if (cell.isIncidental) {
-      visual = incidentalVisual;
     } else {
       const semantic = classifyJadwalKelasCell({
         items: displayItems,
@@ -824,7 +827,7 @@ export const JadwalKelas: React.FC<JadwalKelasProps> = ({
                 <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-violet-50 border border-violet-200"></span><T>{"Kelas Bergantian"}</T></span>
                 <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-red-50 border border-red-200"></span>Bentrok</span>
                 <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-yellow-50 border border-yellow-300"></span>Guru Badal (minggu berjalan)</span>
-                {scheduleViewMode === "THIS_WEEK" && <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-indigo-50 border border-indigo-300"></span><T>{"Jadwal Insidental"}</T></span>}
+                {scheduleViewMode === "THIS_WEEK" && <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-orange-50 border border-orange-300"></span><T>{"Jadwal Insidental"}</T></span>}
                 {scheduleViewMode === "THIS_WEEK" && <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-rose-50 border border-rose-300"></span><T>{"Kalender Akademik"}</T></span>}
                 <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-slate-100 border border-slate-200"></span><T>{"Istirahat / Ishoma Ikhwan"}</T></span>
                 <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded bg-purple-100 border border-purple-200"></span><T>{"Istirahat / Ishoma Akhwat"}</T></span>

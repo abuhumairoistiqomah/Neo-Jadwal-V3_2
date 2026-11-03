@@ -37,6 +37,7 @@ test('official-duty leave rows use absence-red rather than purple and remain lab
   ],'EFFECTIVE').statusLabels,['TUGAS SEKOLAH — TIDAK MENGAJAR']);
   assert.match(view,/getTeacherWeekSlotAnnotations\(items, scheduleMode\)/);
   assert.match(view,/weekStatus === "BADAL"\)\) cellClasses = "bg-amber/);
+  assert.match(view,/weekStatus === "INSIDENTAL"\)\) cellClasses = "bg-orange-50 text-orange-900 border-l-2 border-l-orange-500 border-orange-200"/);
 });
 
 test('admin list uses staff auth, server RPC and two independent visibility toggles',()=>{

@@ -468,7 +468,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                             else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "IZIN")) cellClasses = "bg-rose-50 text-rose-900 border-l-2 border-l-rose-500 border-rose-200";
                             else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "KALENDER")) cellClasses = "bg-red-50 text-red-800 border-l-2 border-l-red-400 border-red-200";
                             else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "BADAL")) cellClasses = "bg-amber-50 text-amber-900 border-l-2 border-l-amber-500 border-amber-200";
-                            else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "INSIDENTAL")) cellClasses = "bg-indigo-50 text-indigo-900 border-l-2 border-l-indigo-500 border-indigo-200";
+                            else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "INSIDENTAL")) cellClasses = "bg-orange-50 text-orange-900 border-l-2 border-l-orange-500 border-orange-200";
                           }
 
                           return (
@@ -674,7 +674,7 @@ export const JadwalLengkap: React.FC<JadwalLengkapProps> = ({
                               else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "IZIN")) bgClasses = "bg-rose-50 text-rose-900 border-rose-200 border-l-2 border-l-rose-500";
                               else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "KALENDER")) bgClasses = "bg-red-50 text-red-800 border-red-200 border-l-2 border-l-red-400";
                               else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "BADAL")) bgClasses = "bg-amber-50 text-amber-900 border-amber-200 border-l-2 border-l-amber-500";
-                              else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "INSIDENTAL")) bgClasses = "bg-indigo-50 text-indigo-900 border-indigo-200 border-l-2 border-l-indigo-500";
+                              else if (items.some((item) => (item as TeacherWeekRow).weekStatus === "INSIDENTAL")) bgClasses = "bg-orange-50 text-orange-900 border-orange-200 border-l-2 border-l-orange-500";
                             }
 
                             return (
