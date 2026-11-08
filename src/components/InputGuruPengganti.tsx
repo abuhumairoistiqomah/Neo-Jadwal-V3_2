@@ -25,6 +25,7 @@ import {
   buildInvalRecommendationDayIndex,
   buildRecommendationDependencyKey,
   normalizeTeacherKey,
+  isPendampingOfTargetClass,
 } from "../domain/inval/recommendationPerformance";
 import { expandInvalSessionRowsForPersistence, groupInvalScheduleItems } from "../domain/inval/sessionGrouping";
 import { scopeInvalRowsToOfficialDuty, coversExactlyOfficialDutySlots } from "../domain/inval/officialDutySelection";
@@ -88,6 +89,10 @@ interface CandidateRecommendation {
   eligible: boolean;
   isAbsentAtPeriod: boolean;
   isPendamping: boolean;
+  /** Class(es) actively accompanied at this JP, from the dated effective schedule. */
+  pendampingClasses: string[];
+  /** True only if the accompanied class is this badal's actual target class. */
+  isPendampingKelasTujuan: boolean;
   isPendampingOnDay: boolean;
   jpCount: number;
   mengajarJp: number;
@@ -141,6 +146,7 @@ const CandidateSelectDropdown: React.FC<CandidateSelectDropdownProps> = React.me
     const q = searchQuery.toLowerCase();
     return (
       c.teacher.nama.toLowerCase().includes(q) ||
+      c.pendampingClasses.some(kelas => kelas.toLowerCase().includes(q)) ||
       (c.teacher.mapel_utama || "").toLowerCase().includes(q) ||
       c.reasons.some(r => r.toLowerCase().includes(q)) ||
       c.constraintReasons.some(r => r.toLowerCase().includes(q))
@@ -223,7 +229,12 @@ const CandidateSelectDropdown: React.FC<CandidateSelectDropdownProps> = React.me
             </span>
             {c.isPendamping && (
               <span className="text-[10px] bg-purple-100 text-purple-800 font-extrabold px-1.5 py-0.5 rounded border border-purple-200 shrink-0">
-                PENDAMPING
+                PENDAMPING{c.pendampingClasses.length > 0 ? ` • ${c.pendampingClasses.join(", ")}` : ""}
+              </span>
+            )}
+            {c.isPendampingKelasTujuan && !isAbsent && c.eligible && c.constraintStatus === "AVAILABLE" && (
+              <span className="text-[10px] bg-emerald-100 text-emerald-900 font-extrabold px-1.5 py-0.5 rounded border border-emerald-300">
+                ★ PENDAMPING KELAS INI
               </span>
             )}
             {c.genderPreference === "MATCH" && (
@@ -307,7 +318,7 @@ const CandidateSelectDropdown: React.FC<CandidateSelectDropdownProps> = React.me
         {allowTeamTeachingNoBadal && <option value={TEAM_TEACHING_NO_BADAL}>Tidak perlu ada badal — ditangani team teaching</option>}
         {recommendations.map(c => (
           <option key={c.teacher.nama} value={c.teacher.nama}>
-            {c.teacher.nama}
+            {c.teacher.nama}{c.pendampingClasses.length > 0 ? ` — Pendamping: ${c.pendampingClasses.join(", ")}` : ""}
           </option>
         ))}
       </select>
@@ -334,6 +345,14 @@ const CandidateSelectDropdown: React.FC<CandidateSelectDropdownProps> = React.me
               <span className="text-[10px] bg-emerald-100 text-emerald-800 font-extrabold px-2 py-0.5 rounded-full border border-emerald-200 shrink-0">
                 <T>{"Terpilih"}</T>
               </span>
+              {selectedCandidate.isPendamping && selectedCandidate.pendampingClasses.length > 0 && (
+                <span className="text-[10px] bg-purple-100 text-purple-800 font-bold px-1.5 py-0.5 rounded border border-purple-200">
+                  PENDAMPING • {selectedCandidate.pendampingClasses.join(", ")}
+                </span>
+              )}
+              {selectedCandidate.isPendampingKelasTujuan && (
+                <span className="text-[10px] bg-emerald-100 text-emerald-900 font-bold px-1.5 py-0.5 rounded border border-emerald-300">★ KELAS INI</span>
+              )}
               <span className="text-xs text-gray-500 font-medium">
                 [Mapel: {selectedCandidate.teacher.mapel_utama}]
               </span>
@@ -1087,7 +1106,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
   // ALGORITMA REKOMENDASI PENGGANTI (Sangat Penting)
   // V3.11.1 keeps the scoring rules intact, but reads from precomputed day indexes
   // instead of repeatedly scanning schedules/logs for every candidate on every render.
-  const getRecommendedTeachers = (jam_ke: number, classLabel: string, subjectLabel: string, currentRowIndex?: number): CandidateRecommendation[] => {
+  const getRecommendedTeachers = (jam_ke: number, classLabel: string, subjectLabel: string, currentRowIndex?: number, classTargets?: string[]): CandidateRecommendation[] => {
     if (!guruIzin) return [];
 
     const targetTeacher = teachers.find(t => t.nama === guruIzin);
@@ -1117,6 +1136,9 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
       const isITBA = checkIsITBA(candidate);
       const normCandName = normalizeTeacherKey(candidate.nama);
       const dayStats = recommendationDayIndex.teacherStatsByName.get(normCandName);
+      const pendampingClasses = dayStats?.pendampingClassesByPeriod.get(Number(jam_ke)) || [];
+      const isPendampingKelasTujuan = isPendampingOfTargetClass(pendampingClasses, classTargets?.length ? classTargets : [classLabel]);
+      const pendampingInfo = { pendampingClasses, isPendampingKelasTujuan };
       const regularTeachingJamKe = dayStats?.regularTeachingJamKe || new Set<number>();
       const savedSubstituteJamKe = recommendationDayIndex.savedSubstituteJamKeByTeacher.get(normCandName) || new Set<number>();
       const formAssignments = formAssignmentsByTeacher.get(normCandName) || [];
@@ -1197,7 +1219,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
       if (!dutyReady || dutyBlock) {
         const dutyReason=dutyBlock?.reason || (dutyState.error || 'Memuat penugasan kegiatan RC3. Tunggu verifikasi.');
         return {
-          teacher:candidate,eligible:false,isAbsentAtPeriod,isPendamping:false,isPendampingOnDay,
+          teacher:candidate,eligible:false,isAbsentAtPeriod,isPendamping:false,...pendampingInfo,isPendampingOnDay,
           jpCount:totalJpCount,mengajarJp,pendampingJp,dailyLoad:dailyLoadObj,weeklyLoad:weeklyLoadObj,
           score:-9999,reasons:[dutyReason],genderPreference,
           constraintStatus:'HARD_BLOCKED' as const,constraintReasons:[dutyReason],constraintIds:[],requiresConstraintOverride:false,
@@ -1206,7 +1228,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
 
       if (constraintAvailability.status === "HARD_BLOCKED") {
         return {
-          teacher: candidate, eligible: false, isAbsentAtPeriod, isPendamping: false, isPendampingOnDay,
+          teacher: candidate, eligible: false, isAbsentAtPeriod, isPendamping: false, ...pendampingInfo, isPendampingOnDay,
           jpCount: totalJpCount, mengajarJp, pendampingJp, dailyLoad: dailyLoadObj, weeklyLoad: weeklyLoadObj,
           score: -9999, reasons: ["Pembatasan badal wajib — tidak dapat dioverride"], genderPreference,
           constraintStatus: constraintAvailability.status, constraintReasons, constraintIds, requiresConstraintOverride: true,
@@ -1215,7 +1237,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
 
       if (isAlreadySelectedInFormAtPeriod) {
         return {
-          teacher: candidate, eligible: false, isAbsentAtPeriod, isPendamping: false, isPendampingOnDay,
+          teacher: candidate, eligible: false, isAbsentAtPeriod, isPendamping: false, ...pendampingInfo, isPendampingOnDay,
           jpCount: totalJpCount, mengajarJp, pendampingJp, dailyLoad: dailyLoadObj, weeklyLoad: weeklyLoadObj,
           score: -999, reasons: ["Sudah dipilih sebagai inval di sesi lain pada JP ini"], genderPreference,
           constraintStatus: constraintAvailability.status, constraintReasons, constraintIds,
@@ -1225,7 +1247,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
 
       if (isBusy) {
         return {
-          teacher: candidate, eligible: false, isAbsentAtPeriod, isPendamping: false, isPendampingOnDay,
+          teacher: candidate, eligible: false, isAbsentAtPeriod, isPendamping: false, ...pendampingInfo, isPendampingOnDay,
           jpCount: totalJpCount, mengajarJp, pendampingJp, dailyLoad: dailyLoadObj, weeklyLoad: weeklyLoadObj,
           score: -999, reasons: ["Sedang mengajar kelas reguler"], genderPreference,
           constraintStatus: constraintAvailability.status, constraintReasons, constraintIds,
@@ -1237,7 +1259,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
         .get(Number(jam_ke))?.has(normCandName) || false;
       if (isAlreadySubbing) {
         return {
-          teacher: candidate, eligible: false, isAbsentAtPeriod, isPendamping: false, isPendampingOnDay,
+          teacher: candidate, eligible: false, isAbsentAtPeriod, isPendamping: false, ...pendampingInfo, isPendampingOnDay,
           jpCount: totalJpCount, mengajarJp, pendampingJp, dailyLoad: dailyLoadObj, weeklyLoad: weeklyLoadObj,
           score: -999, reasons: ["Sudah ditunjuk sebagai inval di kelas lain"], genderPreference,
           constraintStatus: constraintAvailability.status, constraintReasons, constraintIds,
@@ -1280,6 +1302,13 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
         if (candidate.is_manajemen) { score -= 100; reasons.push("Tim Manajemen (-100)"); }
       }
 
+      if (isPendampingKelasTujuan && !isJp0Slot) {
+        // The companion already knows this class; prefer them among otherwise
+        // eligible candidates without bypassing gender, leave or duty blocks.
+        score += 160;
+        reasons.push("Pendamping aktif di kelas tujuan, JP yang sama (+160)");
+      }
+
       if (isITBA) {
         const isAssistingNonCore = dayStats?.assistingNonCorePeriods.has(Number(jam_ke)) || false;
         if (isAssistingNonCore) { score += 15; reasons.push("Mahasiswa ITBA (Mendampingi Kelas Non-Wajib) (+15)"); }
@@ -1302,7 +1331,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
       const isPendamping = dayStats?.pendampingPeriods.has(Number(jam_ke)) || false;
 
       return {
-        teacher: candidate, eligible: true, isAbsentAtPeriod, isPendamping, isPendampingOnDay,
+        teacher: candidate, eligible: true, isAbsentAtPeriod, isPendamping, ...pendampingInfo, isPendampingOnDay,
         jpCount: totalJpCount, mengajarJp, pendampingJp, dailyLoad: dailyLoadObj, weeklyLoad: weeklyLoadObj,
         score, reasons, genderPreference, constraintStatus: constraintAvailability.status, constraintReasons, constraintIds,
         requiresConstraintOverride: constraintAvailability.requiresOverride,
@@ -1325,7 +1354,7 @@ export const InputGuruPengganti: React.FC<InputGuruPenggantiProps> = ({
 
   const recommendationsByRow = useMemo(() => {
     return generatedRows.map((row, index) =>
-      getRecommendedTeachers(row.jam_ke, row.recommendationClassLabel || row.kelas, row.subjectOverride?.trim() || row.mapel, index),
+      getRecommendedTeachers(row.jam_ke, row.recommendationClassLabel || row.kelas, row.subjectOverride?.trim() || row.mapel, index, row.targetSlots?.map(slot => slot.kelas) || [row.kelas]),
     );
     // `tugas` is intentionally not an invalidator; see recommendationDependencyKey.
     // eslint-disable-next-line react-hooks/exhaustive-deps
