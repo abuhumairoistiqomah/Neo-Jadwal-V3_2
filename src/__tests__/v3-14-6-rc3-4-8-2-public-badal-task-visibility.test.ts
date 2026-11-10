@@ -10,7 +10,7 @@ const sql = read("../../supabase/migrations/202610120004_v3_14_6_public_badal_ta
 const original = read("../../supabase/migrations/202610120003_v3_14_6_guest_supabase_read.sql");
 
 test("guest uses upgraded Supabase public RPC and validates both task collections", () => {
-  assert.match(repo, /client\.rpc\("ejadwal_public_schedule_snapshot_v3"\)/);
+  assert.match(repo, /client\.rpc\("ejadwal_public_schedule_snapshot_v4"\)/);
   // v3 adds per-coverage WA contacts; the baseline v2 task projection stays intact.
   assert.match(repo, /"learningTasks", "taskResources"/);
   assert.doesNotMatch(repo, /AppsScript|fetch\(/);

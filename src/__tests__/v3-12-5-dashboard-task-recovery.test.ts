@@ -36,7 +36,8 @@ test("late task menu is conditional and has cross-device recovery", () => {
   const page = readFileSync("src/components/LateTaskCompletion.tsx", "utf8");
   assert.match(app, /missingTeacherTaskCount/);
   assert.match(app, /lengkapi-tugas/);
-  assert.match(page, /4 digit terakhir WhatsApp/i);
+  assert.match(page, /Password Tugas/i);
+  assert.doesNotMatch(page, /4 digit terakhir WhatsApp/i);
   assert.match(page, /Kirim Tugas ke Badal/);
 });
 
@@ -66,4 +67,17 @@ test("V3.12.5.1 gives the absent teacher a direct WhatsApp shortcut to the subst
   assert.match(page, /openSubstituteWhatsapp/);
   assert.match(page, /wa\.me/);
   assert.match(page, /guru_pengganti/);
+});
+
+
+test("HF6.3: public Lengkapi Tugas contacts assigned substitute from dated coverage, not sanitized directory", () => {
+  const page = readFileSync("src/components/LateTaskCompletion.tsx", "utf8");
+  const mapper = readFileSync("src/infrastructure/repositories/supabaseScheduleMappers.ts", "utf8");
+  const rpc = readFileSync("supabase/migrations/202610120005_v3_14_6_dated_public_wa_contacts.sql", "utf8");
+  assert.match(page, /whatsapp_guru_pengganti: rows\.find\(\(row\) => whatsappDigits\(row\.whatsapp_guru_pengganti\)\)/);
+  assert.match(page, /session\.whatsapp_guru_pengganti \|\| substitute\?\.whatsapp_e164/);
+  assert.doesNotMatch(page, /const phone = whatsappDigits\(substitute\?\.whatsapp_e164\);/);
+  assert.match(mapper, /whatsapp_guru_pengganti: row\.substitute_teacher_whatsapp_e164 \|\| null/);
+  assert.match(rpc, /then substitute\.whatsapp_e164 else null::text end/);
+  assert.doesNotMatch(page, /grant select on public\.teachers/i);
 });

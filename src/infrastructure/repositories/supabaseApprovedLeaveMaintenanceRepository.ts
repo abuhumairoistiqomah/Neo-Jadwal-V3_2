@@ -29,6 +29,7 @@ export interface ApprovedLeaveEntry {
   slots: ApprovedLeaveCoverage[];
   periods: ApprovedLeavePeriod[];
   tasks: ApprovedLeaveTask[];
+  taskPassword: string;
 }
 
 export class SupabaseApprovedLeaveMaintenanceRepository {
@@ -43,13 +44,17 @@ export class SupabaseApprovedLeaveMaintenanceRepository {
     if (!rows.length) return [];
     const ids=rows.map((r:any)=>String(r.id));
     const teacherIds=[...new Set(rows.map((r:any)=>String(r.teacher_id)).filter(Boolean))];
-    const [teachers, coverage, periods, tasks] = await Promise.all([
+    const [teachers, coverage, periods, tasks, passwords] = await Promise.all([
       client.from('teachers').select('id,full_name').in('id',teacherIds),
       client.from('coverage_slots').select('id,leave_request_id,schedule_date,period,class_name_snapshot,subject_snapshot,substitute_teacher_name_snapshot,status,deleted_at').in('leave_request_id',ids).eq('source','LEAVE_WORKFLOW').order('period',{ascending:true}),
       client.from('leave_request_periods').select('leave_request_id,schedule_date,period,period_type').in('leave_request_id',ids),
       client.from('leave_request_tasks').select('leave_request_id,period,description').in('leave_request_id',ids),
+      client.rpc('ejadwal_list_leave_task_passwords_hf7',{p_request_ids:ids}),
     ]);
     for(const item of [teachers,coverage,periods,tasks]) if(item.error) throw new Error(`Gagal membaca detail izin: ${explainApprovedLeaveDatabaseError(item.error.message)}`);
+    const passwordMap = new Map<string, string>((passwords.data || []).map((r: any): [string, string] => [
+      String(r.leave_request_id), String(r.password_text || ''),
+    ]));
     const names=new Map((teachers.data||[]).map((r:any)=>[String(r.id),String(r.full_name||'')]));
     return rows.map((r:any)=>({
       id:String(r.id), code:String(r.request_code||r.id),
@@ -58,6 +63,7 @@ export class SupabaseApprovedLeaveMaintenanceRepository {
       reason:String(r.reason||''),detail:String(r.detail||''),
       absenceCategory:normalizeAbsenceCategory(r.absence_category),decidedAt:String(r.decided_at||''),
       status:String(r.status),deleted:Boolean(r.deleted_at),
+      taskPassword:passwordMap.get(String(r.id))||'',
       slots:(coverage.data||[]).filter((v:any)=>v.leave_request_id===r.id).map((v:any)=>({
         id:String(v.id),scheduleDate:String(v.schedule_date),period:Number(v.period),
         className:String(v.class_name_snapshot||''),subject:String(v.subject_snapshot||''),
@@ -66,6 +72,13 @@ export class SupabaseApprovedLeaveMaintenanceRepository {
       periods:(periods.data||[]).filter((v:any)=>v.leave_request_id===r.id).map((v:any)=>({date:String(v.schedule_date),period:Number(v.period),type:String(v.period_type)})),
       tasks:(tasks.data||[]).filter((v:any)=>v.leave_request_id===r.id).map((v:any)=>({period:Number(v.period),description:String(v.description||'')})),
     }));
+  }
+  async setTaskPassword(requestId:string,password:string):Promise<string>{
+    const {data,error}=await requireSupabaseClient().rpc('ejadwal_set_leave_task_password_hf7',{
+      p_leave_request_id:requestId,p_new_password:password.trim()||null,
+    });
+    if(error)throw new Error(`Gagal mengubah Password Tugas: ${error.message}`);
+    return String(data||'');
   }
   async correctReason(requestId:string,reason:string,detail:string,note:string):Promise<void> {
     const {error}=await requireSupabaseClient().rpc('ejadwal_correct_leave_reason_rc17',{

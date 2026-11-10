@@ -38,9 +38,9 @@ test('RC4.4 dated/class/JP match is exact and status must be NO_SUBSTITUTE',()=>
 });
 test('RC4.4 Dashboard reuses the existing task modal; does not allocate badal JP',()=>{
  assert.match(dashboard,/findTeamTeachingTasksForTeacher/);
- assert.match(dashboard,/!item\.teacherUnavailable\.unavailable/);
+ assert.match(dashboard,/getTeacherUnavailableStatus\(\{/);
  assert.match(dashboard,/!item\.isCancelledForKalender/);
- assert.match(dashboard,/taskLabel: "Instruksi \/ tugas untuk team teaching"/);
+ assert.match(dashboard,/\? "Instruksi \/ tugas untuk team teaching"/);
  assert.match(dashboard,/isAcknowledgedTeamTeachingCoverage\(matchingLog\)/);
  assert.doesNotMatch(dashboard,/set.*Badal.*TeamTeaching/);
 });

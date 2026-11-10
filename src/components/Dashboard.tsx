@@ -11,7 +11,7 @@ import { JAM_TIME_MAP } from "../constants/schedule";
 import { teachingSessionSignature } from "../domain/schedule/teachingSession";
 import { activeMqTransferMatches, eligibleMqReceivingClasses, mqTransfersForRegularGroup, type MqTransferRecord } from "../domain/schedule/mqStudentTransfer";
 import { MqStudentTransferRepository } from "../infrastructure/repositories/mqStudentTransferRepository";
-import { findTeamTeachingTasksForTeacher, isAcknowledgedTeamTeachingCoverage } from "../domain/schedule/teamTeachingTask";
+import { findTeamTeachingTasksForTeacher, collectTeacherDashboardTeamTaskNotices, includeTeamTaskClassRows, inlineTeamTasksForClassCard, groupInlineTeamTasksByClass, isAcknowledgedTeamTeachingCoverage } from "../domain/schedule/teamTeachingTask";
 import { findAbsentTeacherCoverage, absentCoverageLabel } from "../domain/schedule/absentTeacherCoverage";
 import { collectPriorityDuties, resolveDisplacedTeacher } from "../domain/schedule/dutyResolution";
 import { getTeacherUnavailableStatus } from "../domain/dashboardTeacherUnavailable";
@@ -236,6 +236,27 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const priorityDutiesForDay = useMemo(() => collectPriorityDuties({
     date: selectedDate, effective: processedMasterSchedulesForDay, logs,
   }), [selectedDate, processedMasterSchedulesForDay, logs]);
+
+  // HF6: shared tasks must be projected from the canonical dated class/team
+  // data, NOT from the rendered regular-teacher cards. Those cards can be
+  // filtered for Native/Syaikh, displaced assistants or operational conflicts.
+  // A missing visual card must not silently hide valid classroom instructions.
+  const teacherTeamTaskNotices = useMemo(() => collectTeacherDashboardTeamTaskNotices<DashboardEffectiveItem>({
+    date: selectedDate, teacherName: selectedTeacher,
+    effectiveClasses: processedMasterSchedulesForDay, coverageLogs: logs,
+    canShowSlot: (slot) => {
+      if (getTeacherUnavailableStatus({
+        teacherId: currentTeacherObj?.id, teacherName: selectedTeacher,
+        date: selectedDate, period: Number(slot.jam_ke),
+        constraints: substituteConstraints, logs,
+      }).unavailable) return false;
+      return !resolveDisplacedTeacher({
+        original: slot, teacherName: selectedTeacher,
+        teacher: currentTeacherObj, priorityDuties: priorityDutiesForDay,
+      });
+    },
+  }), [selectedTeacher, selectedDate, processedMasterSchedulesForDay, logs,
+      currentTeacherObj, substituteConstraints, priorityDutiesForDay]);
 
   // Formatted date string in Indonesian
   const formattedDateIndo = useMemo(() => {
@@ -474,19 +495,34 @@ export const Dashboard: React.FC<DashboardProps> = ({
         const ketKhusus = (s.keterangan_khusus || "").toLowerCase();
         const isRoutineNative = ketKhusus.includes("native");
         const isIncidentalNative = s.isOverridden === true; // guru1-6 is already checked in filtered
-        return isRoutineNative || isIncidentalNative || s.absentTeachers.some((name) => name.trim().toLowerCase() === sTeacherLower);
+        return isRoutineNative || isIncidentalNative ||
+          s.absentTeachers.some((name) => name.trim().toLowerCase() === sTeacherLower) ||
+          // A team member with a dated badal task must still see the actual
+          // lesson even if the older Native/Syaikh filter would hide it.
+          findTeamTeachingTasksForTeacher({
+            date: selectedDate, period: Number(s.jam_ke), teacherName: selectedTeacher,
+            effectiveClasses: [s], coverageLogs: logs,
+          }).length > 0;
       });
     }
 
     return filtered.sort((a, b) => Number(a.jam_ke) - Number(b.jam_ke));
-  }, [processedMasterSchedulesForDay, selectedTeacher, isNativeTeacher]);
+  }, [processedMasterSchedulesForDay, selectedTeacher, isNativeTeacher, selectedDate, logs]);
 
   // Group regular schedule items by jam_ke
   const groupedSchedules = useMemo(() => {
     // Never merge unrelated duties merely because they share a JP. A teacher
     // can be present in a normal lesson AND an incidental on that JP.
     const groups: Record<string, typeof teacherRegularSchedules> = {};
-    selectOperationalTeacherSchedules(teacherRegularSchedules as DashboardEffectiveItem[]).forEach(item => {
+    // HF6.2: eligible classes with shared badal tasks MUST have their usual JP
+    // lesson card. Reattach an effective class row if an older dashboard filter
+    // dropped it. We do not create a separate task card or new duty.
+    const operationalRows = includeTeamTaskClassRows({
+      operationalRows: selectOperationalTeacherSchedules(teacherRegularSchedules as DashboardEffectiveItem[]),
+      effectiveRows: processedMasterSchedulesForDay,
+      notices: teacherTeamTaskNotices,
+    });
+    operationalRows.forEach(item => {
       const sessionKey = teachingSessionSignature(item);
       const groupKey = `${Number(item.jam_ke)}::${sessionKey}`;
       if (!groups[groupKey]) groups[groupKey] = [];
@@ -536,7 +572,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           items
         };
       });
-  }, [teacherRegularSchedules]);
+  }, [teacherRegularSchedules, teacherTeamTaskNotices, processedMasterSchedulesForDay]);
 
   // Filter active logs (Tugas Inval) for the selected teacher on this date
   const activeInvalLogs = useMemo(() => {
@@ -1332,37 +1368,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               </p>
                             )}
 
-                            {/* RC4.4: existing task/material view for remaining team teachers.
-                                NO_SUBSTITUTE does not create an extra badal JP. */}
-                            {!item.isInval && !item.isCancelledForKalender && !item.isCancelledForInval &&
-                              !item.teacherUnavailable.unavailable && !item.dutyConflict &&
-                              findTeamTeachingTasksForTeacher({
-                                date: selectedDate,
-                                period: Number(item.jam_ke),
-                                teacherName: selectedTeacher,
-                                effectiveClasses: item.items,
-                                coverageLogs: logs,
-                              }).map(coverage => (
-                                <div key={`team-task-${coverage.id}`} className="mt-2 p-3 rounded-xl border border-emerald-300 bg-emerald-50/90 text-emerald-950 space-y-2">
-                                  <p className="text-xs font-extrabold">👥 Ditangani Team Teaching — {coverage.kelas} • JP {coverage.jam_ke}</p>
-                                  <p className="text-[11px]">{coverage.guru_izin} tidak mengajar pada JP ini. Tidak diperlukan badal tambahan.</p>
-                                  {coverage.tugas?.trim() ? (
-                                    <button type="button" onClick={() => setTaskModalData({
-                                      isOpen: true, kelas: coverage.kelas,
-                                      mapel: coverage.mapel || item.mapel,
-                                      guru_izin: coverage.guru_izin,
-                                      taskLabel: "Instruksi / tugas untuk team teaching",
-                                      tugas: coverage.tugas || "",
-                                    })}
-                                      className="px-3 py-2 rounded-lg text-xs font-bold border border-emerald-300 bg-white hover:bg-emerald-100 text-emerald-900">
-                                      📋 Lihat Kegiatan Siswa / Tugas
-                                    </button>
-                                  ) : (
-                                    <p className="text-xs font-semibold text-amber-800">⚠ Tugas belum tercatat. Hubungi guru pengampu/manajemen untuk instruksi.</p>
-                                  )}
-                                </div>
-                              ))}
-
                             {/* Inval Info Banner */}
                             {item.isInval && (
                               <div className="mt-1 space-y-1">
@@ -1405,6 +1410,68 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                 )}
                               </div>
                             )}
+
+                            {/* HF7.2: one compact, expandable notice per JP card. Inside,
+                                group records by class but preserve EACH original coverage/task
+                                and its own action; no extra cards or database writes. */}
+                            {!item.isInval && !item.isCancelledForKalender && !item.isCancelledForInval &&
+                              !item.teacherUnavailable.unavailable && (() => {
+                                const taskGroups = groupInlineTeamTasksByClass(inlineTeamTasksForClassCard({
+                                  notices: teacherTeamTaskNotices,
+                                  period: Number(item.jam_ke),
+                                  classes: item.items,
+                                }));
+                                if (!taskGroups.length) return null;
+                                const taskCount = taskGroups.reduce((total, group) => total + group.tasks.length, 0);
+                                return (
+                                  <details data-team-task-in-jp="true"
+                                    className="group mt-2 max-w-xl overflow-hidden rounded-xl border border-emerald-200 bg-emerald-50/70 text-xs">
+                                    <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-emerald-950 hover:bg-emerald-100/80 [&::-webkit-details-marker]:hidden">
+                                      <span className="font-extrabold">👥 Tugas Teaching Team</span>
+                                      <span className="ml-auto rounded-full bg-emerald-100 px-2 py-0.5 font-bold text-emerald-900">
+                                        {taskGroups.length} kelas • {taskCount} informasi
+                                      </span>
+                                      <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
+                                    </summary>
+                                    <div className="space-y-2 border-t border-emerald-200 p-2.5">
+                                      {taskGroups.map(group => (
+                                        <section key={group.kelas} className="rounded-lg border border-emerald-200 bg-white/80 p-2.5">
+                                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 font-extrabold text-emerald-950">
+                                            <span>{group.kelas}</span>
+                                            <span className="text-[10px] text-emerald-800">{group.tasks.length} pengajuan</span>
+                                          </div>
+                                          <div className="space-y-2">
+                                            {group.tasks.map(({coverage, subject}) => (
+                                              <div key={coverage.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-emerald-100 pt-2 first:border-t-0 first:pt-0">
+                                                <div className="min-w-0 flex-1 text-emerald-900">
+                                                  <p>Guru izin: <strong>{coverage.guru_izin}</strong></p>
+                                                  <p>{isAcknowledgedTeamTeachingCoverage(coverage)
+                                                    ? 'Ditangani teaching team (tanpa badal tambahan).'
+                                                    : <>Badal: <strong>{coverage.guru_pengganti || 'Belum ditentukan'}</strong>.</>}</p>
+                                                </div>
+                                                {coverage.tugas?.trim() ? (
+                                                  <button type="button" onClick={() => setTaskModalData({
+                                                    isOpen: true, kelas: coverage.kelas, mapel: subject,
+                                                    guru_izin: coverage.guru_izin,
+                                                    taskLabel: isAcknowledgedTeamTeachingCoverage(coverage)
+                                                      ? 'Instruksi / tugas untuk team teaching'
+                                                      : 'Tugas badal — informasi untuk teaching team',
+                                                    tugas: coverage.tugas || '',
+                                                  })} className="rounded-lg border border-emerald-300 bg-emerald-100 px-2.5 py-1.5 font-bold text-emerald-950 hover:bg-emerald-200">
+                                                    📋 Lihat Tugas
+                                                  </button>
+                                                ) : (
+                                                  <span className="font-semibold text-amber-900">⚠ Belum ada tugas</span>
+                                                )}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </section>
+                                      ))}
+                                    </div>
+                                  </details>
+                                );
+                              })()}
 
                             {/* Incidental Override Info */}
                             {item.isOverridden && item.alasan_insidental && !item.isCancelledForKalender && (

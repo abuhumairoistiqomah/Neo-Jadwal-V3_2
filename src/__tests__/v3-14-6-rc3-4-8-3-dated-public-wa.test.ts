@@ -15,7 +15,7 @@ test("public RPC v3 is additive over task-enabled v2, not the unfiltered teacher
   assert.match(sql, /jsonb_array_elements\(base\.payload->'coverageSlots'\)/);
   assert.match(sql, /jsonb_build_object\('coverageSlots', dated_coverage\.rows\)/);
   assert.doesNotMatch(sql, /jsonb_build_object\('teachers'|grant\s+select\s+on\s+public\.teachers/i);
-  assert.match(publicRepo, /client\.rpc\("ejadwal_public_schedule_snapshot_v3"\)/);
+  assert.match(publicRepo, /client\.rpc\("ejadwal_public_schedule_snapshot_v4"\)/);
 });
 
 test("server only emits current/future, uncancelled, non-expired dated teacher contacts", () => {

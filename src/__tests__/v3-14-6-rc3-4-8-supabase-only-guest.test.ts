@@ -9,7 +9,7 @@ const sql = src("../../supabase/migrations/202610120003_v3_14_6_guest_supabase_r
 
 test("RC3.4.8 guest schedules are loaded from a Supabase RPC, not GAS", () => {
   assert.match(app, /new SupabasePublicScheduleRepository\(\)\.loadPublicState\(\)/);
-  assert.match(repo, /client\.rpc\("ejadwal_public_schedule_snapshot_v3"\)/);
+  assert.match(repo, /client\.rpc\("ejadwal_public_schedule_snapshot_v4"\)/);
   // v3 adds per-coverage WA contacts; the baseline v2 task projection stays intact.
   assert.doesNotMatch(app, /fetchFromAppsScript|publicGasBootstrappedRef|header-refresh-db-btn/);
   assert.match(app, /if \(!isAdmin\) \{/);

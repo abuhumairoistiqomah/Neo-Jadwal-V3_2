@@ -29,6 +29,29 @@ export class PublicLateTaskRepository {
     };
   }
 
+  async unlockByTaskPassword(args: { teacherName: string; scheduleDate: string; period: number; password?: string }): Promise<RecoveredTaskAccess> {
+    const client = requireSupabaseClient();
+    const {data, error} = await client.rpc('ejadwal_unlock_leave_task_hf7', {
+      p_teacher_name: args.teacherName.trim(),
+      p_schedule_date: args.scheduleDate,
+      p_period: args.period,
+      p_password: args.password?.trim() || null,
+    });
+    if(error) throw new Error(error.message || 'Gagal membuka akses tugas.');
+    const row = (data || {}) as Record<string, unknown>;
+    if(row.error) throw new Error(String(row.error) === 'INVALID_TASK_PASSWORD'
+      ? 'Password Tugas salah. Minta password yang benar kepada admin.'
+      : 'Password terkunci sementara akibat terlalu banyak percobaan. Coba lagi nanti.');
+    if(!row.upload_token || !row.request_code) throw new Error('Server tidak mengembalikan token tugas.');
+    return {
+      requestCode: String(row.request_code),
+      teacherName: String(row.teacher_name || args.teacherName),
+      scheduleDate: String(row.schedule_date || args.scheduleDate),
+      uploadToken: String(row.upload_token),
+      expiresAt: String(row.expires_at || ''),
+    };
+  }
+
   async completeTask(args: {
     requestCode: string;
     uploadToken: string;

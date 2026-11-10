@@ -1,10 +1,11 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, CheckCircle2, Clock3, KeyRound, Link2, MessageCircle, Paperclip, Send, UploadCloud, UserRound } from "lucide-react";
 import type { LogIzinItem, Teacher } from "../domain/models";
 import { syncTaskResourcesWithText } from "../domain/taskResources";
 import { isTaskRecoveryDateActive } from "../domain/date";
 import { findStoredTaskAccess, saveStoredTaskAccess, type StoredTaskAccess } from "../domain/taskRecovery";
 import { uploadPublicLeaveTaskFile } from "../infrastructure/drive/publicLeaveTaskDriveBridge";
+import { getCurrentUserContext } from "../infrastructure/auth/supabaseAuthRepository";
 import { PublicLateTaskRepository } from "../infrastructure/repositories/publicLateTaskRepository";
 import { buildLateTaskHandoffWhatsappMessage, findTeacherByName, whatsappDigits } from "../domain/whatsappTemplates";
 
@@ -26,6 +27,8 @@ interface MissingTaskSession {
   jam_ke: number;
   guru_izin: string;
   guru_pengganti: string;
+  /** Public, date-scoped contact from the active coverage (not the staff directory). */
+  whatsapp_guru_pengganti: string | null;
   kelas: string;
   mapel: string;
 }
@@ -60,6 +63,7 @@ function groupMissingTasks(logs: LogIzinItem[], teacherName: string, schoolToday
     jam_ke: Number(rows[0].jam_ke),
     guru_izin: rows[0].guru_izin,
     guru_pengganti: rows[0].guru_pengganti,
+    whatsapp_guru_pengganti: rows.find((row) => whatsappDigits(row.whatsapp_guru_pengganti))?.whatsapp_guru_pengganti || null,
     kelas: [...new Set(rows.map((row) => row.kelas).filter(Boolean))].join(" + "),
     mapel: [...new Set(rows.map((row) => row.mapel).filter(Boolean))].join(" + "),
   })).sort((a, b) => a.tanggal.localeCompare(b.tanggal) || a.jam_ke - b.jam_ke);
@@ -80,8 +84,8 @@ export const LateTaskCompletion: React.FC<LateTaskCompletionProps> = ({
   const [activeKey, setActiveKey] = useState("");
   const [description, setDescription] = useState("");
   const [files, setFiles] = useState<File[]>([]);
-  const [requestCode, setRequestCode] = useState("");
-  const [last4, setLast4] = useState("");
+  const [taskPassword, setTaskPassword] = useState("");
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [access, setAccess] = useState<StoredTaskAccess | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -90,12 +94,41 @@ export const LateTaskCompletion: React.FC<LateTaskCompletionProps> = ({
 
   const active = missingSessions.find((item) => item.key === activeKey) || null;
   const visibleSessions = missingSessions.filter((item) => !completedKeys.has(item.key));
+  useEffect(() => {
+    let disposed=false;
+    void getCurrentUserContext().then(user=>{
+      if(!disposed){
+        const staff=Boolean(user?.roles.some(role=>role==='ADMIN'||role==='WAKASEK'));
+        setIsAdminAuthenticated(staff);
+        if(staff)setAccess(null); // Do not reuse a stale guest upload token after admin login.
+      }
+    }).catch(()=>{if(!disposed) setIsAdminAuthenticated(false);});
+    return ()=>{disposed=true;};
+  },[]);
+  // Authenticated ADMIN/WAKASEK unlocks the selected session through a role-checked RPC.
+  // The visible Admin Mode toggle is deliberately not considered authentication.
+  useEffect(()=>{
+    if(!isAdminAuthenticated||!active||access)return;
+    let disposed=false;
+    setBusy(true);setError('');
+    void repository.unlockByTaskPassword({
+      teacherName:active.guru_izin,scheduleDate:active.tanggal,period:active.jam_ke,
+    }).then(recovered=>{
+      if(disposed)return;
+      const next:StoredTaskAccess={...recovered};
+      saveStoredTaskAccess(next);setAccess(next);
+    }).catch(err=>{if(!disposed)setError(err instanceof Error?err.message:String(err));})
+      .finally(()=>{if(!disposed)setBusy(false);});
+    return ()=>{disposed=true;};
+  },[isAdminAuthenticated,active?.key,access,repository]);
 
   const openSubstituteWhatsapp = (session: MissingTaskSession) => {
     const substitute = findTeacherByName(teachers, session.guru_pengganti);
-    const phone = whatsappDigits(substitute?.whatsapp_e164);
+    // Guest teacher rows intentionally have no phone number. Use the scoped
+    // contact on this exact coverage session; admin directory is only fallback.
+    const phone = whatsappDigits(session.whatsapp_guru_pengganti || substitute?.whatsapp_e164);
     if (!phone) {
-      window.alert(`Nomor WhatsApp ${session.guru_pengganti} belum tersedia di Master Guru.`);
+      window.alert(`Kontak WhatsApp ${session.guru_pengganti} tidak tersedia untuk penugasan pada tanggal ini.`);
       return;
     }
     const message = buildLateTaskHandoffWhatsappMessage({
@@ -117,44 +150,24 @@ export const LateTaskCompletion: React.FC<LateTaskCompletionProps> = ({
     setError("");
     setMessage("");
     const stored = findStoredTaskAccess(session.guru_izin, session.tanggal);
-    setAccess(stored);
-    setRequestCode(stored?.requestCode || "");
-    setLast4("");
+    setAccess(isAdminAuthenticated ? null : stored);
+    setTaskPassword("");
   };
 
   const recoverAccess = async () => {
-    if (!active) return;
-    if (!requestCode.trim()) {
-      setError("Masukkan kode pengajuan izin terlebih dahulu.");
-      return;
-    }
-    if (!/^\d{4}$/.test(last4.trim())) {
-      setError("Masukkan 4 digit terakhir nomor WhatsApp guru yang terdaftar.");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      const recovered = await repository.recoverAccess({
-        teacherName: active.guru_izin,
-        requestCode,
-        whatsappLast4: last4,
+    if(!active)return;
+    if(!taskPassword.trim()){setError('Masukkan Password Tugas dari admin.');return;}
+    setBusy(true);setError('');
+    try{
+      const recovered=await repository.unlockByTaskPassword({
+        teacherName:active.guru_izin,scheduleDate:active.tanggal,
+        period:active.jam_ke,password:taskPassword,
       });
-      const next: StoredTaskAccess = {
-        requestCode: recovered.requestCode,
-        teacherName: recovered.teacherName,
-        scheduleDate: recovered.scheduleDate,
-        uploadToken: recovered.uploadToken,
-        expiresAt: recovered.expiresAt,
-      };
-      saveStoredTaskAccess(next);
-      setAccess(next);
-      setMessage("Akses tugas berhasil dipulihkan. Silakan isi tugas atau upload file.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+      const next:StoredTaskAccess={...recovered};
+      saveStoredTaskAccess(next);setAccess(next);
+      setTaskPassword('');setMessage('Akses tugas terbuka. Silakan isi tugas atau upload file.');
+    }catch(err){setError(err instanceof Error?err.message:String(err));}
+    finally{setBusy(false);}
   };
 
   const submitTask = async () => {
@@ -204,7 +217,11 @@ export const LateTaskCompletion: React.FC<LateTaskCompletionProps> = ({
       setFiles([]);
       setActiveKey("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const cause=err instanceof Error?err.message:String(err);
+      if(cause.includes('PUBLIC_TASK_UPLOAD_NOT_AUTHORIZED')){
+        setAccess(null);
+        setError('Token upload telah kedaluwarsa atau direset. Buka akses lagi dengan Password Tugas.');
+      }else setError(cause);
     } finally {
       setBusy(false);
     }
@@ -283,11 +300,16 @@ export const LateTaskCompletion: React.FC<LateTaskCompletionProps> = ({
 
                 {!access ? (
                   <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 space-y-3">
-                    <div className="font-black text-violet-900 flex items-center gap-2"><KeyRound className="w-4 h-4" /> Pulihkan akses tugas</div>
-                    <p className="text-xs text-violet-700">Masukkan kode pengajuan izin dan 4 digit terakhir WhatsApp guru. Jika pengajuan dibuat dari perangkat ini, kode biasanya sudah terisi otomatis.</p>
-                    <input value={requestCode} onChange={(e) => setRequestCode(e.target.value.toUpperCase())} placeholder="IZN-20261009-ABC123" className="w-full rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-sm font-mono" />
-                    <input value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4 digit terakhir WA" inputMode="numeric" className="w-full rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-sm" />
-                    <button disabled={busy} onClick={() => void recoverAccess()} className="w-full rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-black text-sm py-2.5 disabled:opacity-50">{busy ? "Memeriksa..." : "Buka Akses Tugas"}</button>
+                    <div className="font-black text-violet-900 flex items-center gap-2"><KeyRound className="w-4 h-4" /> {isAdminAuthenticated ? 'Membuka akses admin' : 'Password Tugas'}</div>
+                    {isAdminAuthenticated ? (
+                      <p className="text-xs text-violet-700">Admin yang sudah login membuka akses otomatis. Tidak perlu memasukkan password.</p>
+                    ) : (
+                      <>
+                        <p className="text-xs text-violet-700">Masukkan Password Tugas yang diberikan admin untuk pengajuan ini.</p>
+                        <input type="password" autoComplete="off" value={taskPassword} onChange={e=>setTaskPassword(e.target.value.toUpperCase().replace(/[^A-Z]/g,'').slice(0,24))} placeholder="Password Tugas" aria-label="Password Tugas" className="w-full rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-sm font-mono" />
+                        <button disabled={busy} onClick={() => void recoverAccess()} className="w-full rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-black text-sm py-2.5 disabled:opacity-50">{busy ? "Memeriksa..." : "Buka Akses Tugas"}</button>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <>

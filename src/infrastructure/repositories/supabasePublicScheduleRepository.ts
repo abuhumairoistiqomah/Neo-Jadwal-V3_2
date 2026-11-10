@@ -8,13 +8,13 @@ import type { SubstituteConstraint } from "../../domain/substituteAvailability";
  * Guest/read-only runtime uses the same canonical schedule mapping as Admin.
  * PostgreSQL exposes only a sanitized projection through one RPC; the public RPC never opens the global teacher phone directory or leave reasons.
  * It exposes only dated contact fields on live current/future coverage slots.
- * Instructional tasks for current/future substitute slots remain available.
+ * Operational instructional tasks remain readable for any non-cancelled coverage date; private leave notes and old phone contacts remain hidden.
  * A failed request must never fall back to old data.
  */
 export class SupabasePublicScheduleRepository implements ScheduleReadRepository {
   async loadPublicState(): Promise<{ snapshot: ScheduleDataSnapshot; constraints: SubstituteConstraint[] }> {
     const client = requireSupabaseClient();
-    const { data, error } = await client.rpc("ejadwal_public_schedule_snapshot_v3");
+    const { data, error } = await client.rpc("ejadwal_public_schedule_snapshot_v4");
     if (error) throw new Error(`Gagal memuat jadwal publik Supabase: ${error.message}`);
     if (!data || typeof data !== "object" || Array.isArray(data)) {
       throw new Error("Respons jadwal publik Supabase tidak valid.");

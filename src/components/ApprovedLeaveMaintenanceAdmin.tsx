@@ -18,6 +18,7 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
   const [reasonDrafts,setReasonDrafts]=useState<Record<string,string>>({});
   const [detailDrafts,setDetailDrafts]=useState<Record<string,string>>({});
   const [taskDrafts,setTaskDrafts]=useState<Record<string,string>>({});
+  const [passwordDrafts,setPasswordDrafts]=useState<Record<string,string>>({});
   const [showPast,setShowPast]=useState(false);
   const [showDeleted,setShowDeleted]=useState(false);
   const [error,setError]=useState('');
@@ -25,6 +26,7 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
   const [working,setWorking]=useState(false);
   const [edit,setEdit]=useState<{id:string;date:string;oldJP:number;newJP:number;note:string}|null>(null);
   const editorRef=useRef<HTMLDivElement>(null);
+  const removalRef=useRef<HTMLDivElement>(null);
   const [removal,setRemoval]=useState<{id:string;code:string;note:string;restore:boolean}|null>(null);
   const today=getSchoolTodayISO();
   const load=useCallback(async()=>{
@@ -40,10 +42,16 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
       setReasonDrafts(Object.fromEntries(freshRows.map(r=>[r.id,r.reason])));
       setDetailDrafts(Object.fromEntries(freshRows.map(r=>[r.id,r.detail])));
       setTaskDrafts(Object.fromEntries(freshRows.flatMap(r=>r.tasks.map(t=>[`${r.id}:${t.period}`,t.description]))));
+      setPasswordDrafts(Object.fromEntries(freshRows.map(r=>[r.id,r.taskPassword])));
     } catch(e){setLoadFailed(true);setError(e instanceof Error?e.message:String(e));}
     finally{setLoading(false);setChecking(false);}
   },[repo]);
   useEffect(()=>{void load();},[load]);
+  useEffect(()=>{
+    if(!removal)return;
+    const frame=requestAnimationFrame(()=>removalRef.current?.scrollIntoView({behavior:'smooth',block:'start'}));
+    return ()=>cancelAnimationFrame(frame);
+  },[removal?.id,removal?.restore]);
   const filtered=approvedLeaveVisible<ApprovedLeaveEntry>(rows,today,showPast,showDeleted);
   const hiddenPast=rows.filter(r=>r.dateEnd<today&&!r.deleted).length;
   const hiddenDeleted=rows.filter(r=>r.deleted).length;
@@ -61,6 +69,17 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
     try {await repo.setAbsenceCategory(row.id,next,note.trim());
       setInfo(`Kategori ${row.code} diperbarui menjadi ${absenceCategoryLabel(next)} (audit tersimpan).`);
       await load();await onChanged?.();
+    }catch(e){setError(e instanceof Error?e.message:String(e));}
+    finally{setWorking(false);}
+  };
+  const saveTaskPassword=async(row:ApprovedLeaveEntry,regenerate=false)=>{
+    const next=regenerate?'':(passwordDrafts[row.id]??row.taskPassword).trim().toUpperCase();
+    if(!regenerate&&!/^[A-Z]{8,24}$/.test(next)){setError('Password Tugas harus 8–24 huruf A–Z.');return;}
+    setWorking(true);setError('');setInfo('');
+    try{
+      await repo.setTaskPassword(row.id,next);
+      await load();
+      setInfo(`Password Tugas ${row.code} berhasil ${regenerate?'diacak ulang':'diubah'}. Berikan kepada guru yang perlu mengisi tugas.`);
     }catch(e){setError(e instanceof Error?e.message:String(e));}
     finally{setWorking(false);}
   };
@@ -143,7 +162,7 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
         </div>
         <div className="flex gap-2"><button type="button" disabled={working||edit.oldJP===edit.newJP||!edit.note.trim()} onClick={()=>void move()} className="bg-indigo-600 disabled:opacity-40 text-white px-3 py-2 rounded-lg text-sm font-bold flex gap-1 items-center"><Save className="w-4 h-4"/> <T>{"Simpan Koreksi"}</T></button><button type="button" onClick={()=>setEdit(null)} className="bg-white border px-3 py-2 rounded-lg text-sm"><T>{"Batal"}</T></button></div>
       </div>}
-      {removal&&<div className="rounded-2xl bg-rose-50 border border-rose-300 p-4 space-y-3">
+      {removal&&<div ref={removalRef} className="scroll-mt-4 rounded-2xl bg-rose-50 border border-rose-300 p-4 space-y-3">
         <h2 className="font-black text-rose-900">{removal.restore?<T>{"Pulihkan Pengajuan"}</T>:<T>{"Soft Delete"}</T>} • {removal.code}</h2>
         <p className="text-xs text-rose-800">{removal.restore?"Pemulihan hanya berhasil jika jadwal lama masih valid dan tidak ada penugasan baru yang bertabrakan.":"Seluruh pengajuan, slot badal, dan tugas ikut dinonaktifkan. Riwayat fisik tidak dihapus."}</p>
         <input className="w-full rounded-lg border px-3 py-2 text-sm" placeholder={removal.restore?"Alasan pulihkan (wajib)":"Alasan hapus (wajib)"} value={removal.note} onChange={e=>setRemoval(v=>v?{...v,note:e.target.value}:v)}/>
@@ -155,6 +174,24 @@ export const ApprovedLeaveMaintenanceAdmin:React.FC<{onBack:()=>void;onChanged?:
         return <article key={row.id} className={`rounded-2xl border bg-white p-4 space-y-3 ${row.deleted?'opacity-60 border-rose-200':'border-slate-200'}`}>
           <div className="flex flex-wrap justify-between gap-2"><div><div className="flex flex-wrap items-center gap-2"><strong className="text-slate-900">{row.teacher}</strong><span className="text-[10px] font-mono text-slate-500">{row.code}</span>{row.deleted?<span className="text-[10px] bg-rose-100 text-rose-800 rounded px-2 py-0.5">SOFT DELETED</span>:<span className="text-[10px] bg-emerald-100 text-emerald-800 rounded px-2 py-0.5">APPROVED</span>}</div>
             <p className="text-xs text-slate-500 mt-1">{row.dateStart}{row.dateEnd!==row.dateStart?` – ${row.dateEnd}`:''} • {row.reason}</p>{row.detail&&<p className="text-xs mt-1 text-slate-600">{row.detail}</p>}
+            {!row.deleted&&<div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 space-y-2">
+              <label htmlFor={`task-password-${row.id}`} className="block text-xs font-extrabold text-emerald-900">Password Tugas</label>
+              <p className="text-[11px] text-emerald-800">Satu password per pengajuan. Guru memasukkannya di Lengkapi Tugas; tidak perlu kode pengajuan dan 4 digit WA.</p>
+              <div className="flex flex-wrap gap-2 items-center">
+                <input id={`task-password-${row.id}`} aria-label={`Password Tugas ${row.code}`}
+                  value={passwordDrafts[row.id]??row.taskPassword}
+                  onChange={e=>setPasswordDrafts(v=>({...v,[row.id]:e.target.value.toUpperCase().replace(/[^A-Z]/g,'').slice(0,24)}))}
+                  minLength={8} maxLength={24} className="font-mono tracking-wider rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm flex-1 min-w-[160px]"/>
+                <button type="button" disabled={working||(passwordDrafts[row.id]??row.taskPassword)===row.taskPassword}
+                  onClick={()=>void saveTaskPassword(row)} className="rounded-lg bg-emerald-700 text-white px-3 py-2 text-xs font-bold disabled:opacity-40">Simpan Password</button>
+                <button type="button" disabled={working} onClick={()=>void saveTaskPassword(row,true)}
+                  className="rounded-lg border border-emerald-300 bg-white text-emerald-800 px-3 py-2 text-xs font-bold">Acak Ulang</button>
+                <button type="button" disabled={!row.taskPassword} onClick={()=>void navigator.clipboard.writeText(row.taskPassword)
+                  .then(()=>setInfo(`Password Tugas ${row.code} disalin. Bagikan hanya kepada guru terkait.`))
+                  .catch(()=>setError('Tidak bisa menyalin otomatis. Silakan salin teks password secara manual.'))}
+                  className="rounded-lg border border-emerald-300 bg-white text-emerald-800 px-3 py-2 text-xs font-bold">Salin Password</button>
+              </div>
+            </div>}
             {!row.deleted&&<div className="mt-3 space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
               <strong className="text-xs text-indigo-900">Koreksi Alasan Izin (Audit)</strong>
               <input aria-label={`Alasan ${row.code}`} value={reasonDrafts[row.id]??row.reason}

@@ -35,5 +35,6 @@ export function findStoredTaskAccess(teacherName: string, scheduleDate: string):
     normalize(item.teacherName) === teacherKey
     && item.scheduleDate === scheduleDate
     && Boolean(item.uploadToken)
+    && (!item.expiresAt || new Date(item.expiresAt).getTime() > Date.now())
   )) || null;
 }
